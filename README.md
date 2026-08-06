@@ -1,4 +1,4 @@
-# JBG PDF Proofreader
+# PDF Minimal Proofreader
 
 En fristående FastAPI-webbtjänst för restriktiv korrekturläsning av textbaserade PDF-filer. Den är utformad efter samma övergripande arbetsflöde som JBGLangImprover, men ändrar aldrig originaldokumentet. Resultatet är en Excel-fil med ett minimalt språkförslag per rad.
 
