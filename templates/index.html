@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PDF-korrektur</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="card">
+    <h1>PDF-korrektur</h1>
+    <p>Ladda upp en textbaserad PDF. Tjänsten läser två spalter, identifierar kapitel och verser och skapar en Excel-fil med minimala språkförslag.</p>
+    <form action="/review" method="post" enctype="multipart/form-data">
+      <label>PDF-fil
+        <input type="file" name="file" accept="application/pdf,.pdf" required>
+      </label>
+      <label>OpenAI API-nyckel
+        <input type="password" name="api_key" autocomplete="off" placeholder="sk-...">
+      </label>
+      <label>Modell
+        <input type="text" name="model" value="{{ default_model }}" required>
+      </label>
+      <label class="check"><input type="checkbox" name="mock" value="true"> Offlinetest utan API-anrop</label>
+      <button type="submit">Granska och hämta Excel</button>
+    </form>
+    <p class="note">Skannade filer/OCR stöds inte. Maximal filstorlek: {{ max_upload_mb }} MB. API-nyckeln används endast för den aktuella begäran.</p>
+  </main>
+</body>
+</html>
