@@ -7,23 +7,169 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <main class="card">
+  <main class="card" id="app-card">
     <h1>PDF-korrektur</h1>
     <p>Ladda upp en textbaserad PDF. Tjänsten läser två spalter, identifierar kapitel och verser och skapar en Excel-fil med minimala språkförslag.</p>
-    <form action="/review" method="post" enctype="multipart/form-data">
+
+    <form id="review-form" action="/review" method="post" enctype="multipart/form-data">
       <label>PDF-fil
         <input type="file" name="file" accept="application/pdf,.pdf" required>
       </label>
+
       <label>OpenAI API-nyckel
         <input type="password" name="api_key" autocomplete="off" placeholder="sk-...">
       </label>
+
       <label>Modell
-        <input type="text" name="model" value="{{ default_model }}" required>
+        <select name="model" required>
+          {% for model in available_models %}
+          <option value="{{ model }}"{% if model == default_model %} selected{% endif %}>{{ model }}</option>
+          {% endfor %}
+        </select>
       </label>
-      <label class="check"><input type="checkbox" name="mock" value="true"> Offlinetest utan API-anrop</label>
-      <button type="submit">Granska och hämta Excel</button>
+
+      <label class="check">
+        <input type="checkbox" name="mock" value="true">
+        Offlinetest utan API-anrop
+      </label>
+
+      <button id="submit-button" type="submit">Granska och hämta Excel</button>
     </form>
+
+    <div id="processing-status" class="processing-status" role="status" aria-live="polite" aria-hidden="true">
+      <span class="spinner" aria-hidden="true"></span>
+      <span>Bearbetar dokumentet. Vänta medan analysen och API-anropen slutförs...</span>
+    </div>
+
+    <div id="error-message" class="error-message" role="alert" hidden></div>
+
     <p class="note">Skannade filer/OCR stöds inte. Maximal filstorlek: {{ max_upload_mb }} MB. API-nyckeln används endast för den aktuella begäran.</p>
   </main>
+
+  <script>
+    (() => {
+      const form = document.getElementById('review-form');
+      const card = document.getElementById('app-card');
+      const status = document.getElementById('processing-status');
+      const errorMessage = document.getElementById('error-message');
+
+      const setBusy = (busy) => {
+        card.classList.toggle('is-busy', busy);
+        status.setAttribute('aria-hidden', busy ? 'false' : 'true');
+
+        for (const control of form.elements) {
+          control.disabled = busy;
+        }
+      };
+
+      const getDownloadFilename = (response) => {
+        const disposition = response.headers.get('Content-Disposition') || '';
+
+        const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+        if (utf8Match) {
+          try {
+            return decodeURIComponent(utf8Match[1].trim());
+          } catch (_) {
+            // Fall through to ordinary filename parsing.
+          }
+        }
+
+        const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+        if (filenameMatch) {
+          return filenameMatch[1].trim();
+        }
+
+        return 'korrektur.xlsx';
+      };
+
+      const readErrorMessage = async (response) => {
+        const contentType = response.headers.get('Content-Type') || '';
+
+        if (contentType.includes('application/json')) {
+          const data = await response.json();
+
+          if (typeof data.detail === 'string') {
+            return data.detail;
+          }
+
+          if (Array.isArray(data.detail)) {
+            return data.detail.map((item) => {
+              if (item && typeof item === 'object') {
+                const location = Array.isArray(item.loc)
+                  ? item.loc.filter((part) => part !== 'body').join(' → ')
+                  : '';
+                const message = item.msg || 'Ogiltigt värde.';
+                return location ? `${location}: ${message}` : message;
+              }
+              return String(item);
+            }).join('\n');
+          }
+
+          if (data.detail != null) {
+            try {
+              return JSON.stringify(data.detail);
+            } catch (_) {
+              return String(data.detail);
+            }
+          }
+
+          return 'Bearbetningen misslyckades.';
+        }
+
+        const text = await response.text();
+        return text || `Bearbetningen misslyckades (HTTP ${response.status}).`;
+      };
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+
+        if (!form.reportValidity()) {
+          return;
+        }
+
+        errorMessage.hidden = true;
+        errorMessage.textContent = '';
+
+        // Important: build FormData BEFORE disabling the controls.
+        // Disabled controls are omitted from FormData, which otherwise causes
+        // FastAPI to return HTTP 422 because the uploaded file is missing.
+        const formData = new FormData(form);
+        setBusy(true);
+
+        try {
+          const response = await fetch(form.action, {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (!response.ok) {
+            throw new Error(await readErrorMessage(response));
+          }
+
+          const blob = await response.blob();
+          const filename = getDownloadFilename(response);
+          const objectUrl = URL.createObjectURL(blob);
+          const downloadLink = document.createElement('a');
+
+          downloadLink.href = objectUrl;
+          downloadLink.download = filename;
+          downloadLink.style.display = 'none';
+
+          document.body.appendChild(downloadLink);
+          downloadLink.click();
+          downloadLink.remove();
+
+          window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+        } catch (error) {
+          errorMessage.textContent = error instanceof Error
+            ? error.message
+            : 'Bearbetningen misslyckades.';
+          errorMessage.hidden = false;
+        } finally {
+          setBusy(false);
+        }
+      });
+    })();
+  </script>
 </body>
 </html>

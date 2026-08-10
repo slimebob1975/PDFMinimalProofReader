@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .config import settings
+from .config import AVAILABLE_MODELS, settings
 from .pdf_extractor import PdfExtractionError
 from .service import ProofreadingService
 
@@ -25,7 +25,11 @@ def index(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={"default_model": settings.openai_model, "max_upload_mb": settings.max_upload_mb},
+        context={
+            "default_model": settings.openai_model,
+            "available_models": AVAILABLE_MODELS,
+            "max_upload_mb": settings.max_upload_mb,
+        },
     )
 
 
@@ -45,6 +49,10 @@ def review_pdf(
     if Path(filename).suffix.lower() != ".pdf":
         raise HTTPException(status_code=400, detail="Endast PDF-filer stöds.")
 
+    selected_model = model.strip() or settings.openai_model
+    if not mock and selected_model not in AVAILABLE_MODELS:
+        raise HTTPException(status_code=400, detail="Ogiltigt modellval.")
+
     max_bytes = settings.max_upload_mb * 1024 * 1024
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp_path = Path(tmp.name)
@@ -61,7 +69,7 @@ def review_pdf(
             pdf_path=tmp_path,
             original_filename=filename,
             api_key=api_key.strip() or None,
-            model=model.strip() or settings.openai_model,
+            model=selected_model,
             mock=mock,
         )
     except (PdfExtractionError, ValueError) as exc:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Protocol
 
@@ -8,7 +9,12 @@ from .models import ModelSuggestion, SuggestionEnvelope, TextUnit
 
 
 class Reviewer(Protocol):
-    def review(self, units: list[TextUnit], model: str) -> list[ModelSuggestion]: ...
+    def review(
+        self,
+        units: list[TextUnit],
+        model: str,
+        run_id: str | None = None,
+    ) -> list[ModelSuggestion]: ...
 
 
 def load_policy(path: Path) -> str:
@@ -42,9 +48,20 @@ class OpenAIReviewer:
         self.policy = load_policy(policy_path)
         self.max_chars = max_chars
 
-    def review(self, units: list[TextUnit], model: str) -> list[ModelSuggestion]:
+    def review(
+        self,
+        units: list[TextUnit],
+        model: str,
+        run_id: str | None = None,
+    ) -> list[ModelSuggestion]:
         all_suggestions: list[ModelSuggestion] = []
-        for batch in make_batches(units, self.max_chars):
+        batches = make_batches(units, self.max_chars)
+        total_calls = len(batches)
+        prefix = f"[{run_id}] " if run_id else ""
+
+        print(f"{prefix}GPT-anrop planerade: {total_calls}", flush=True)
+
+        for index, batch in enumerate(batches, start=1):
             payload = [
                 {
                     "unit_id": unit.unit_id,
@@ -57,29 +74,57 @@ class OpenAIReviewer:
                 }
                 for unit in batch
             ]
+            user_message = (
+                "Granska följande textenheter. Returnera bara nödvändiga minimala korrigeringar.\n"
+                + json.dumps(payload, ensure_ascii=False)
+            )
+            request_input = [
+                {"role": "system", "content": self.policy},
+                {"role": "user", "content": user_message},
+            ]
+
+            first_ref = batch[0].reference if batch else "-"
+            last_ref = batch[-1].reference if batch else "-"
+            print(
+                f"{prefix}GPT-anrop {index}/{total_calls} startar "
+                f"({len(batch)} textenheter, {first_ref} – {last_ref})...",
+                flush=True,
+            )
+            started = time.perf_counter()
             response = self.client.responses.parse(
                 model=model,
-                input=[
-                    {"role": "system", "content": self.policy},
-                    {
-                        "role": "user",
-                        "content": "Granska följande textenheter. Returnera bara nödvändiga minimala korrigeringar.\n"
-                        + json.dumps(payload, ensure_ascii=False),
-                    },
-                ],
+                input=request_input,
                 text_format=SuggestionEnvelope,
             )
+            elapsed = time.perf_counter() - started
+
             parsed = response.output_parsed
             if parsed is None:
                 raise RuntimeError("Modellen returnerade inget strukturerat svar.")
-            all_suggestions.extend(parsed.suggestions)
+
+            parsed_suggestions = parsed.suggestions
+            all_suggestions.extend(parsed_suggestions)
+
+            print(
+                f"{prefix}GPT-anrop {index}/{total_calls} klart på {elapsed:.1f} s; "
+                f"{len(parsed_suggestions)} förslag i svaret. Totalt hittills: {len(all_suggestions)}.",
+                flush=True,
+            )
+
         return all_suggestions
 
 
 class MockReviewer:
     """Offlinegranskare för installations- och flödestest."""
 
-    def review(self, units: list[TextUnit], model: str = "mock") -> list[ModelSuggestion]:
+    def review(
+        self,
+        units: list[TextUnit],
+        model: str = "mock",
+        run_id: str | None = None,
+    ) -> list[ModelSuggestion]:
+        prefix = f"[{run_id}] " if run_id else ""
+        print(f"{prefix}Offlineläge: inga GPT-anrop utförs.", flush=True)
         suggestions: list[ModelSuggestion] = []
         for unit in units:
             if "  " in unit.text:

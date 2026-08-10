@@ -43,22 +43,22 @@ def export_workbook(
     ws = wb.active
     ws.title = "Ändringsförslag"
     ws.append([
-        "Förslags-ID", "Dokument", "Kapitel", "Vers", "Hänvisning", "PDF-sida", "Spalt",
-        "Rad start", "Rad slut", "Ursprunglig text", "Föreslagen text", "Feltyp",
-        "Motivering", "Kontext", "Säkerhet", "Status",
+        "Förslags-ID", "Dokument", "Kapitel", "Vers", "Hänvisning", "PDF-sida",
+        "Ursprunglig text", "Föreslagen text", "Feltyp", "Motivering", "Kontext",
+        "Säkerhet", "Status",
     ])
     for item in suggestions:
         ws.append([
             item.suggestion_id, item.document, item.chapter, item.verse, item.reference, item.page,
-            item.column, item.line_start, item.line_end, item.old, item.new, item.error_type,
-            item.motivation, item.original_context, item.confidence, item.status,
+            item.old, item.new, item.error_type, item.motivation, item.original_context,
+            item.confidence, item.status,
         ])
-    _style_sheet(ws, {1: 12, 2: 18, 3: 9, 4: 8, 5: 22, 6: 10, 7: 11, 8: 10, 9: 10,
-                      10: 35, 11: 35, 12: 28, 13: 42, 14: 70, 15: 11, 16: 18})
+    _style_sheet(ws, {1: 12, 2: 18, 3: 9, 4: 8, 5: 22, 6: 10, 7: 35, 8: 35,
+                      9: 28, 10: 42, 11: 70, 12: 11, 13: 18})
     for row in ws.iter_rows(min_row=2):
         for cell in row:
             cell.font = IMPORTED_FONT
-        row[15].fill = REVIEW_FILL
+        row[12].fill = REVIEW_FILL
 
     units_ws = wb.create_sheet("Extraherad text")
     units_ws.append([
