@@ -5,6 +5,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Keep this list deliberately explicit: the web UI only offers models that the
 # service has been tested/configured to call via the Responses API.
 AVAILABLE_MODELS = [
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
     "gpt-5.4-mini",
     "gpt-5.2",
     "gpt-5.1",

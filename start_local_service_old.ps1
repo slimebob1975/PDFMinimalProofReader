@@ -14,8 +14,10 @@ $BasePython = 'C:\Users\Grro\AppData\Local\Programs\Python\Python313\python.exe'
 $VenvName = 'pdfminimalproofreader\_venv'
 $VenvDir  = Join-Path $TempDir $VenvName
 
-# Executables inside the venv
+# Files/executables inside the venv
 $Py       = Join-Path $VenvDir 'Scripts\python.exe'
+$Pip      = Join-Path $VenvDir 'Scripts\pip.exe'
+$Uvicorn  = Join-Path $VenvDir 'Scripts\uvicorn.exe'
 $Activate = Join-Path $VenvDir 'Scripts\Activate.ps1'
 
 # Requirements file
@@ -29,17 +31,6 @@ $Port = 8060
 
 
 $ErrorActionPreference = 'Stop'
-
-
-function Assert-LastExitCode {
-    param(
-        [Parameter(Mandatory)][string]$Operation
-    )
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "$Operation failed with exit code $LASTEXITCODE."
-    }
-}
 
 
 function Invoke-InDir {
@@ -59,6 +50,17 @@ function Invoke-InDir {
     }
     finally {
         Pop-Location
+    }
+}
+
+
+function Assert-LastExitCode {
+    param(
+        [Parameter(Mandatory)][string]$Operation
+    )
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Operation failed with exit code $LASTEXITCODE."
     }
 }
 
@@ -92,19 +94,25 @@ try {
 
 
     # ------------------------------------------------------------------------
-    # Prepare temp directory
+    # Prepare temp folder
     # ------------------------------------------------------------------------
 
     New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
 
 
     # ------------------------------------------------------------------------
-    # Create virtual environment if needed
+    # Create virtual environment
     #
-    # We deliberately create it without pip first because automatic ensurepip
-    # has previously hung on this machine.
+    # Important:
+    # We deliberately use --without-pip here.
     #
-    # Pip is then bootstrapped explicitly once.
+    # On this machine, Python 3.13 has been observed to hang when "venv"
+    # automatically invokes ensurepip during environment creation.
+    #
+    # We therefore:
+    #   1. create the venv without pip
+    #   2. run ensurepip explicitly
+    #   3. upgrade pip explicitly
     # ------------------------------------------------------------------------
 
     if (-not (Test-Path $Py)) {
@@ -120,16 +128,20 @@ try {
         Write-Host "Installing pip in virtual environment..." -ForegroundColor Cyan
         Write-Host ""
 
-        & $Py -m ensurepip --default-pip
+        & $Py -m ensurepip --upgrade
         Assert-LastExitCode "Installing pip"
 
+
+        Write-Host "Upgrading pip..." -ForegroundColor Cyan
+        Write-Host ""
+
+        & $Py -m pip install --upgrade pip
+        Assert-LastExitCode "Upgrading pip"
     }
     else {
-
         Write-Host "Using existing virtual environment:" -ForegroundColor Green
         Write-Host "  $VenvDir"
         Write-Host ""
-
     }
 
 
@@ -145,7 +157,7 @@ try {
 
 
     # ------------------------------------------------------------------------
-    # Show environment information
+    # Show Python environment
     # ------------------------------------------------------------------------
 
     Write-Host "Python environment:" -ForegroundColor Cyan
@@ -173,9 +185,6 @@ try {
 
     # ------------------------------------------------------------------------
     # Install/update project dependencies
-    #
-    # We do NOT upgrade pip or uvicorn separately.
-    # requirements.txt is the source of truth for dependencies.
     # ------------------------------------------------------------------------
 
     Write-Host ""
@@ -188,7 +197,19 @@ try {
 
 
     # ------------------------------------------------------------------------
-    # Verify FastAPI application import
+    # Ensure Uvicorn standard extras are installed
+    # ------------------------------------------------------------------------
+
+    Write-Host ""
+    Write-Host "Updating Uvicorn..." -ForegroundColor Cyan
+    Write-Host ""
+
+    & $Py -m pip install --upgrade "uvicorn[standard]"
+    Assert-LastExitCode "Updating Uvicorn"
+
+
+    # ------------------------------------------------------------------------
+    # Check that the application can be imported
     # ------------------------------------------------------------------------
 
     Write-Host ""
@@ -211,6 +232,7 @@ try {
     Write-Host ""
     Write-Host "Press Ctrl+C to stop the service." -ForegroundColor DarkGray
     Write-Host ""
+
 
     Invoke-InDir -Path $DevRoot -ScriptBlock {
 
