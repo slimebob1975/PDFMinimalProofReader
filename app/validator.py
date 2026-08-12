@@ -1,8 +1,32 @@
 from __future__ import annotations
 
 import difflib
+import re
 
 from .models import ModelSuggestion, TextUnit, ValidatedSuggestion
+
+
+# Fotnotsmarkörer i käll-PDF:erna förekommer ofta direkt efter ett ord, t.ex.
+# "Kristi1", "splittringar1" eller "Helige1 Ande". De är referensdata och
+# ska inte bli korrekturförslag.
+FOOTNOTE_MARKER_RE = re.compile(r"(?<=[A-Za-zÅÄÖåäö])\d{1,2}(?=\s|$|[.,;:!?])")
+
+# Avsiktligt konservativ igenkänning av bibelhänvisningar. Vi skyddar även
+# hänvisningar som PDF-layouten har skjutit in mitt i löptexten.
+BIBLE_REFERENCE_TOKEN_RE = re.compile(
+    r"(?:[1-3]\s+)?[A-ZÅÄÖ][A-Za-zÅÄÖåäö]{1,15}\.?\s+"
+    r"\d{1,3}:\d{1,3}(?:[-–]\d{1,3})?(?:f{1,2})?\.?"
+)
+
+
+def _contains_bible_reference(text: str) -> bool:
+    return bool(BIBLE_REFERENCE_TOKEN_RE.search(text))
+
+
+def _only_removes_footnote_marker(old: str, new: str) -> bool:
+    """Return True when the proposed change only removes footnote digits."""
+    stripped = FOOTNOTE_MARKER_RE.sub("", old)
+    return stripped != old and stripped == new
 
 
 class SuggestionValidator:
@@ -29,6 +53,10 @@ class SuggestionValidator:
                 reasons.append("ingen_förändring")
             elif suggestion.old not in unit.text:
                 reasons.append("originaltext_saknas_i_kontext")
+            elif _only_removes_footnote_marker(suggestion.old, suggestion.new):
+                reasons.append("fotnotsmarkör_ska_ignoreras")
+            elif _contains_bible_reference(suggestion.old) or _contains_bible_reference(suggestion.new):
+                reasons.append("bibelhänvisning_ska_ignoreras")
             elif len(suggestion.old) > self.max_replacement_chars or len(suggestion.new) > self.max_replacement_chars:
                 reasons.append("för_lång_ersättning")
             else:

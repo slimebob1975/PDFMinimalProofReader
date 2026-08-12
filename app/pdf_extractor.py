@@ -14,6 +14,10 @@ CHAPTER_RE = re.compile(
     re.IGNORECASE,
 )
 PAGE_NUMBER_RE = re.compile(r"^\d{1,5}$")
+HEADER_REFERENCE_RE = re.compile(
+    r"^(?:[1-3]\s+)?[A-ZÅÄÖ][A-Za-zÅÄÖåäö.]{1,15}\s+"
+    r"\d{1,3}:\d{1,3}(?:[-–]\d{1,3})?[.!?]?$"
+)
 
 
 class PdfExtractionError(ValueError):
@@ -21,7 +25,14 @@ class PdfExtractionError(ValueError):
 
 
 def _normalize_line(text: str) -> str:
-    text = text.replace("\u00ad", "-").replace("\ufffe", "").replace("\ufffd", "")
+    # PDF:er använder ofta mjukt bindestreck (U+00AD) som avstavningsmarkör.
+    # Inne i en fysisk rad är det en ren layoutartefakt (evan\u00adgelium -> evangelium).
+    # I radslut behåller vi tillfälligt ett vanligt bindestreck så att _append() kan
+    # slå ihop ordet med nästa rad (himmel\u00ad + riket -> himmelriket).
+    text = text.replace("\ufffe", "").replace("\ufffd", "")
+    if text.endswith("\u00ad"):
+        text = text[:-1] + "-"
+    text = text.replace("\u00ad", "")
     text = re.sub(r"\s+", " ", text).strip()
     text = re.sub(r"^([A-ZÅÄÖ])\s+([a-zåäö]{2,})", r"\1\2", text)
     return text
@@ -111,6 +122,10 @@ def extract_lines(pdf_path: Path, max_pages: int = 500) -> tuple[list[PdfLine], 
                 kind = "body"
                 if CHAPTER_RE.fullmatch(item["text"]):
                     kind = "chapter"
+                elif item["y0"] < height * 0.08 and HEADER_REFERENCE_RE.fullmatch(item["text"]):
+                    # Sidhuvuden kan innehålla en kort bok-/vershänvisning, t.ex.
+                    # "Oba. 1:21". Den är navigationsdata och ska inte hamna i versen.
+                    kind = "running_title"
                 elif (
                     item["y0"] < height * 0.20
                     and re.fullmatch(r"[A-ZÅÄÖ][A-Za-zÅÄÖåäö-]{2,40}", item["text"])
@@ -174,12 +189,63 @@ def _append(parts: list[str], text: str) -> None:
         parts.append(text)
 
 
+
+def _looks_like_single_chapter_document(lines: list[PdfLine]) -> bool:
+    """Infer chapter 1 for Bible books that have verse numbers but no chapter heading."""
+    if any(CHAPTER_RE.fullmatch(line.text) for line in lines):
+        return False
+
+    verse_numbers = [
+        int(match.group(1))
+        for line in lines
+        if (match := VERSE_RE.match(line.text))
+    ]
+    if len(verse_numbers) < 3 or verse_numbers[0] not in {1, 2}:
+        return False
+
+    # Require a convincing rising verse sequence near the beginning. This avoids
+    # treating an unrelated numbered list as a Bible chapter.
+    sample = verse_numbers[: min(8, len(verse_numbers))]
+    rising_steps = sum(b > a for a, b in zip(sample, sample[1:]))
+    return rising_steps >= max(2, len(sample) - 2)
+
+
+def _single_chapter_verse1_start(lines: list[PdfLine]) -> int | None:
+    """Locate an unnumbered verse 1 before the first explicit verse 2 marker."""
+    first_numbered = next(
+        (i for i, line in enumerate(lines) if VERSE_RE.match(line.text)),
+        None,
+    )
+    if first_numbered is None:
+        return None
+
+    first_match = VERSE_RE.match(lines[first_numbered].text)
+    if not first_match or int(first_match.group(1)) != 2:
+        return None
+
+    # A large initial letter is commonly extracted as its own line in these PDFs
+    # (e.g. "O" + "badjas..."). Prefer that as the start of verse 1.
+    for i in range(first_numbered - 1):
+        if (
+            re.fullmatch(r"[A-ZÅÄÖ]", lines[i].text)
+            and re.match(r"^[a-zåäö]", lines[i + 1].text)
+        ):
+            return i
+
+    # Fallback: start at the first body line before verse 2, after title/introduction.
+    return next(
+        (i for i in range(first_numbered) if lines[i].kind == "body"),
+        None,
+    )
+
 def build_units(lines: list[PdfLine], document: str) -> list[TextUnit]:
     units: list[TextUnit] = []
-    chapter: int | None = None
+    single_chapter = _looks_like_single_chapter_document(lines)
+    chapter: int | None = 1 if single_chapter else None
     current: dict | None = None
     waiting_for_first_verse = False
     fallback_counter = 0
+    single_chapter_verse1_start = _single_chapter_verse1_start(lines) if single_chapter else None
 
     def flush() -> None:
         nonlocal current, fallback_counter
@@ -214,14 +280,41 @@ def build_units(lines: list[PdfLine], document: str) -> list[TextUnit]:
             )
         current = None
 
-    for line in lines:
-        if line.kind == "running_title":
+    for index, line in enumerate(lines):
+        # Dokumentnamnet återkommer som sidhuvud på många sidor. Det kan vara
+        # klassat som heading_or_intro (särskilt när titeln innehåller blanksteg),
+        # så filtrera även på själva dokumentnamnet innan verserna byggs.
+        if line.kind == "running_title" or line.text == document:
             continue
+
         chapter_match = CHAPTER_RE.fullmatch(line.text)
         if chapter_match:
             flush()
             chapter = int(chapter_match.group("num_after") or chapter_match.group("num_before"))
             waiting_for_first_verse = True
+            continue
+
+        # In single-chapter books such as Obadja, verse 1 is often unnumbered and
+        # no chapter heading exists. Start an inferred 1:1 at the detected opening.
+        if single_chapter and single_chapter_verse1_start == index and current is None:
+            current = {
+                "chapter": 1,
+                "verse": 1,
+                "inferred": True,
+                "page_start": line.page,
+                "page_end": line.page,
+                "printed_page_start": line.printed_page,
+                "column_start": line.column,
+                "line_start": line.line_no,
+                "line_end": line.line_no,
+                "parts": [],
+                "source_lines": [line.text],
+            }
+            _append(current["parts"], line.text)
+            continue
+
+        # Before the inferred opening of verse 1, ignore title/introduction text.
+        if single_chapter and single_chapter_verse1_start is not None and index < single_chapter_verse1_start:
             continue
 
         verse_match = VERSE_RE.match(line.text)

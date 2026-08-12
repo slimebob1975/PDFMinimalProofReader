@@ -9,11 +9,11 @@
 <body>
   <main class="card" id="app-card">
     <h1>PDF-korrektur</h1>
-    <p>Ladda upp en textbaserad PDF. Tjänsten läser två spalter, identifierar kapitel och verser och skapar en Excel-fil med minimala språkförslag.</p>
+    <p>Ladda upp en eller flera textbaserade PDF-filer. Tjänsten läser två spalter, identifierar kapitel och verser och skapar Excel-underlag med minimala språkförslag.</p>
 
     <form id="review-form" action="/review" method="post" enctype="multipart/form-data">
-      <label>PDF-fil
-        <input type="file" name="file" accept="application/pdf,.pdf" required>
+      <label>PDF-fil(er)
+        <input type="file" name="files" accept="application/pdf,.pdf" multiple required>
       </label>
 
       <label>OpenAI API-nyckel
@@ -38,12 +38,12 @@
 
     <div id="processing-status" class="processing-status" role="status" aria-live="polite" aria-hidden="true">
       <span class="spinner" aria-hidden="true"></span>
-      <span>Bearbetar dokumentet. Vänta medan analysen och API-anropen slutförs...</span>
+      <span>Bearbetar dokumenten. Vänta medan extraktion, analys och API-anrop slutförs...</span>
     </div>
 
     <div id="error-message" class="error-message" role="alert" hidden></div>
 
-    <p class="note">Skannade filer/OCR stöds inte. Maximal filstorlek: {{ max_upload_mb }} MB. API-nyckeln används endast för den aktuella begäran.</p>
+    <p class="note">Skannade filer/OCR stöds inte. Högst {{ max_batch_files }} PDF-filer per körning och maximalt {{ max_upload_mb }} MB per fil. Vid flera PDF-filer skapas en gemensam Excel-fil med en flik per dokument. API-nyckeln används endast för den aktuella begäran.</p>
   </main>
 
   <script>
