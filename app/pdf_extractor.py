@@ -9,7 +9,7 @@ import fitz
 from .models import PdfLine, TextUnit
 
 VERSE_RE = re.compile(r"^(\d{1,3})\.\s*(.*)$")
-CHAPTER_RE = re.compile(r"^Kapitel\s+(\d+)\s*$", re.IGNORECASE)
+CHAPTER_RE = re.compile(r"^(?:Kapitel|Psalm)\s+(\d+)\s*$", re.IGNORECASE)
 PAGE_NUMBER_RE = re.compile(r"^\d{1,5}$")
 
 

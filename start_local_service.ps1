@@ -1,47 +1,33 @@
-# ===================== CONFIG (edit if needed) ===============================
+# ===================== CONFIG (edit these) ==================================
 
-# Temporary folder for the virtual environment
-$TempDir = 'C:\temp'
-
-# Project folder.
-# Uses the folder where this script is located.
-$DevRoot = $PSScriptRoot
+# Base folders
+$TempDir   = 'C:\temp'
+$DevRoot   = 'C:\Users\Grro\Documents\dev\jupyter\JBG\MCLC\PDFMinimalProofReader'
 
 # Base Python interpreter
 $BasePython = 'C:\Users\Grro\AppData\Local\Programs\Python\Python313\python.exe'
 
 # Virtual environment
-$VenvName = 'pdfminimalproofreader\_venv'
-$VenvDir  = Join-Path $TempDir $VenvName
+$VenvName  = 'pdfminimalproofreader_venv'
+$VenvDir   = Join-Path $TempDir $VenvName
+$VenvRequirements = '.\requirements.txt'
 
-# Executables inside the venv
-$Py       = Join-Path $VenvDir 'Scripts\python.exe'
-$Activate = Join-Path $VenvDir 'Scripts\Activate.ps1'
-
-# Requirements file
-$Requirements = Join-Path $DevRoot 'requirements.txt'
+# Executables inside the venv (once created)
+$Py         = Join-Path $VenvDir 'Scripts\python.exe'
+$Pip        = Join-Path $VenvDir 'Scripts\pip.exe'
+$Uvicorn    = Join-Path $VenvDir 'Scripts\uvicorn.exe'
+$Activate   = Join-Path $VenvDir 'Scripts\Activate.ps1'
+$Deactivate = Join-Path $VenvDir 'Scripts\deactivate'
 
 # FastAPI application
-$App  = 'app.main:app'
-$Port = 8060
+$App        = 'app.main:app'
+$Port       = 8060
 
-# ===================== END CONFIG ===========================================
+#
+# ===================== END CONFIG (do not edit) =============================
+#
 
-
-$ErrorActionPreference = 'Stop'
-
-
-function Assert-LastExitCode {
-    param(
-        [Parameter(Mandatory)][string]$Operation
-    )
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "$Operation failed with exit code $LASTEXITCODE."
-    }
-}
-
-
+# Helper: run in a directory (like a temporary cd with pushd/popd)
 function Invoke-InDir {
     param(
         [Parameter(Mandatory)][string]$Path,
@@ -49,196 +35,54 @@ function Invoke-InDir {
     )
 
     Push-Location $Path
-
-    try {
-        & $ScriptBlock
-
-        if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
-            throw "Command failed with exit code $LASTEXITCODE."
-        }
-    }
-    finally {
-        Pop-Location
-    }
+    try   { & $ScriptBlock }
+    finally { Pop-Location }
 }
 
-
+# Get current working directory
 $CurrentDir = $PWD.Path
 
+# --- Set up virtual environment ---
 
-try {
+New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
 
-    Write-Host ""
-    Write-Host "PDF Minimal ProofReader" -ForegroundColor Cyan
-    Write-Host "=======================" -ForegroundColor Cyan
-    Write-Host ""
+Set-Location $TempDir
 
-
-    # ------------------------------------------------------------------------
-    # Basic checks
-    # ------------------------------------------------------------------------
-
-    if (-not (Test-Path $BasePython)) {
-        throw "Python interpreter not found: $BasePython"
-    }
-
-    if (-not (Test-Path $DevRoot)) {
-        throw "Project directory not found: $DevRoot"
-    }
-
-    if (-not (Test-Path $Requirements)) {
-        throw "requirements.txt not found: $Requirements"
-    }
-
-
-    # ------------------------------------------------------------------------
-    # Prepare temp directory
-    # ------------------------------------------------------------------------
-
-    New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
-
-
-    # ------------------------------------------------------------------------
-    # Create virtual environment if needed
-    #
-    # We deliberately create it without pip first because automatic ensurepip
-    # has previously hung on this machine.
-    #
-    # Pip is then bootstrapped explicitly once.
-    # ------------------------------------------------------------------------
-
-    if (-not (Test-Path $Py)) {
-
-        Write-Host "Creating virtual environment:" -ForegroundColor Yellow
-        Write-Host "  $VenvDir" -ForegroundColor Yellow
-        Write-Host ""
-
-        & $BasePython -m venv --without-pip $VenvDir
-        Assert-LastExitCode "Creating virtual environment"
-
-
-        Write-Host "Installing pip in virtual environment..." -ForegroundColor Cyan
-        Write-Host ""
-
-        & $Py -m ensurepip --default-pip
-        Assert-LastExitCode "Installing pip"
-
-    }
-    else {
-
-        Write-Host "Using existing virtual environment:" -ForegroundColor Green
-        Write-Host "  $VenvDir"
-        Write-Host ""
-
-    }
-
-
-    # ------------------------------------------------------------------------
-    # Activate virtual environment
-    # ------------------------------------------------------------------------
-
-    if (-not (Test-Path $Activate)) {
-        throw "Virtual environment activation script not found: $Activate"
-    }
-
-    . $Activate
-
-
-    # ------------------------------------------------------------------------
-    # Show environment information
-    # ------------------------------------------------------------------------
-
-    Write-Host "Python environment:" -ForegroundColor Cyan
-
-    & $Py --version
-    Assert-LastExitCode "Checking Python version"
-
-    & $Py -m pip --version
-    Assert-LastExitCode "Checking pip version"
-
-    Write-Host ""
-
-
-    # ------------------------------------------------------------------------
-    # Update repository
-    # ------------------------------------------------------------------------
-
-    Write-Host "Updating Git repository..." -ForegroundColor Cyan
-    Write-Host ""
-
-    Invoke-InDir -Path $DevRoot -ScriptBlock {
-        git.exe pull
-    }
-
-
-    # ------------------------------------------------------------------------
-    # Install/update project dependencies
-    #
-    # We do NOT upgrade pip or uvicorn separately.
-    # requirements.txt is the source of truth for dependencies.
-    # ------------------------------------------------------------------------
-
-    Write-Host ""
-    Write-Host "Installing Python requirements..." -ForegroundColor Cyan
-    Write-Host ""
-
-    Invoke-InDir -Path $DevRoot -ScriptBlock {
-        & $Py -m pip install -r $Requirements
-    }
-
-
-    # ------------------------------------------------------------------------
-    # Verify FastAPI application import
-    # ------------------------------------------------------------------------
-
-    Write-Host ""
-    Write-Host "Checking FastAPI application..." -ForegroundColor Cyan
-    Write-Host ""
-
-    Invoke-InDir -Path $DevRoot -ScriptBlock {
-        & $Py -c "from app.main import app; print('FastAPI application imported successfully.')"
-    }
-
-
-    # ------------------------------------------------------------------------
-    # Start service
-    # ------------------------------------------------------------------------
-
-    Write-Host ""
-    Write-Host "Starting PDF Minimal ProofReader..." -ForegroundColor Green
-    Write-Host ""
-    Write-Host "URL: http://127.0.0.1:$Port" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "Press Ctrl+C to stop the service." -ForegroundColor DarkGray
-    Write-Host ""
-
-    Invoke-InDir -Path $DevRoot -ScriptBlock {
-
-        & $Py -m uvicorn `
-            $App `
-            --reload `
-            --host 127.0.0.1 `
-            --port $Port `
-            --log-level debug
-    }
-
+if (-not (Test-Path $Py)) {
+    Write-Host "Creating venv: $VenvDir" -ForegroundColor Yellow
+    & $BasePython -m venv $VenvDir
 }
-catch {
 
-    Write-Host ""
-    Write-Host "ERROR" -ForegroundColor Red
-    Write-Host "-----" -ForegroundColor Red
-    Write-Host $_.Exception.Message -ForegroundColor Red
-    Write-Host ""
+# Activate the venv for this session
+. $Activate
 
-    exit 1
+# --- Upgrade pip ---
 
+& $Py -m pip install --upgrade pip
+
+# --- Update web service code to latest version and install modules ---
+
+Invoke-InDir -Path $DevRoot -ScriptBlock {
+    git.exe pull
+    & $Pip install -r $VenvRequirements
 }
-finally {
 
-    if (Get-Command deactivate -ErrorAction SilentlyContinue) {
-        deactivate
-    }
-
-    Set-Location $CurrentDir
+Invoke-InDir -Path $DevRoot -ScriptBlock {
+    & $Pip install --upgrade uvicorn[standard]
 }
+
+# --- Launch uvicorn ---
+
+Invoke-InDir -Path $DevRoot -ScriptBlock {
+    & $Uvicorn $App `
+        --reload `
+        --host 127.0.0.1 `
+        --port $Port `
+        --log-level debug
+}
+
+# --- Deactivate and return to project folder ---
+
+Set-Location $TempDir
+& $Deactivate
+Set-Location $CurrentDir
