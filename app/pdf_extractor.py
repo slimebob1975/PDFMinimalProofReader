@@ -9,7 +9,10 @@ import fitz
 from .models import PdfLine, TextUnit
 
 VERSE_RE = re.compile(r"^(\d{1,3})\.\s*(.*)$")
-CHAPTER_RE = re.compile(r"^(?:Kapitel|Psalm)\s+(\d+)\s*$", re.IGNORECASE)
+CHAPTER_RE = re.compile(
+    r"^(?:(?:Kapitel|Psalm)\s+(?P<num_after>\d+)|(?P<num_before>\d+)\s+Kapitlet)\s*$",
+    re.IGNORECASE,
+)
 PAGE_NUMBER_RE = re.compile(r"^\d{1,5}$")
 
 
@@ -204,7 +207,7 @@ def build_units(lines: list[PdfLine], document: str) -> list[TextUnit]:
         chapter_match = CHAPTER_RE.fullmatch(line.text)
         if chapter_match:
             flush()
-            chapter = int(chapter_match.group(1))
+            chapter = int(chapter_match.group("num_after") or chapter_match.group("num_before"))
             waiting_for_first_verse = True
             continue
 
