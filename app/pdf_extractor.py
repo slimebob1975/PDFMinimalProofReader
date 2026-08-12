@@ -138,11 +138,24 @@ def extract_lines(pdf_path: Path, max_pages: int = 500) -> tuple[list[PdfLine], 
 
 
 def detect_document_name(lines: Iterable[PdfLine], pdf_path: Path) -> str:
-    candidates: list[str] = []
-    for line in list(lines)[:140]:
-        if line.kind in {"heading_or_intro", "running_title"} and re.fullmatch(r"[A-ZÅÄÖ][A-Za-zÅÄÖåäö -]{2,40}", line.text):
-            candidates.append(line.text)
-    return candidates[0] if candidates else pdf_path.stem
+    all_lines = list(lines)
+    if not all_lines:
+        return pdf_path.stem
+
+    first_page = min(line.page for line in all_lines)
+    candidates = [
+        line
+        for line in all_lines
+        if line.page == first_page
+        and line.kind in {"heading_or_intro", "running_title"}
+        and re.fullmatch(r"[A-ZÅÄÖ][A-Za-zÅÄÖåäö -]{2,60}", line.text)
+    ]
+
+    if not candidates:
+        return pdf_path.stem
+
+    candidates.sort(key=lambda line: (line.y0, line.x0))
+    return candidates[0].text
 
 
 def _append(parts: list[str], text: str) -> None:
