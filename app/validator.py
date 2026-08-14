@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import difflib
 import re
+from collections import Counter
 
 from .models import ModelSuggestion, TextUnit, ValidatedSuggestion
 
@@ -10,6 +11,10 @@ from .models import ModelSuggestion, TextUnit, ValidatedSuggestion
 # "Kristi1", "splittringar1" eller "Helige1 Ande". De är referensdata och
 # ska inte bli korrekturförslag.
 FOOTNOTE_MARKER_RE = re.compile(r"(?<=[A-Za-zÅÄÖåäö])\d{1,2}(?=\s|$|[.,;:!?])")
+FOOTNOTE_LABEL_RE = re.compile(
+    r"(?:^|\s)\d{1,2}(?:KJV|KXII|KJV/NKJV|NKJV|SFB|B2000|B1917)?\s*:",
+    re.IGNORECASE,
+)
 
 # Avsiktligt konservativ igenkänning av bibelhänvisningar. Vi skyddar även
 # hänvisningar som PDF-layouten har skjutit in mitt i löptexten.
@@ -19,7 +24,27 @@ BIBLE_REFERENCE_TOKEN_RE = re.compile(
 )
 
 WORD_RE = re.compile(r"[A-Za-zÅÄÖåäö]+")
+DIGIT_RE = re.compile(r"\d+")
 SENTENCE_LINKERS = {"för", "men", "och", "eller", "utan", "ty"}
+NEGATIONS = {"inte", "icke", "ej"}
+RISKY_PRONOUNS = {
+    "jag", "mig", "min", "mitt", "mina",
+    "du", "dig", "din", "ditt", "dina",
+    "han", "honom", "hans",
+    "hon", "henne", "hennes",
+    "den", "det", "dess",
+    "vi", "oss", "vår", "vårt", "våra",
+    "ni", "er", "ert", "era",
+    "de", "dem", "deras",
+    "sin", "sitt", "sina",
+}
+AUXILIARIES = {
+    "är", "var", "vara", "blir", "blev", "bli",
+    "har", "hade", "ha",
+    "kan", "kunde", "ska", "skulle", "må", "måste",
+    "vill", "ville", "bör", "borde", "får", "fick",
+    "kommer", "kom",
+}
 
 
 def _contains_bible_reference(text: str) -> bool:
@@ -30,6 +55,26 @@ def _only_removes_footnote_marker(old: str, new: str) -> bool:
     """Return True when the proposed change only removes footnote digits."""
     stripped = FOOTNOTE_MARKER_RE.sub("", old)
     return stripped != old and stripped == new
+
+
+def _changes_digits(old: str, new: str) -> bool:
+    """Protect verse, footnote and other numeric data from model edits."""
+    return DIGIT_RE.findall(old) != DIGIT_RE.findall(new)
+
+
+def _is_in_footnote_text(context: str, old: str) -> bool:
+    """Detect edits inside common footnote/reference text such as '1KJV: ...'."""
+    if not old:
+        return False
+    start = context.find(old)
+    if start < 0:
+        return False
+    before = context[:start]
+    # A footnote label should be fairly close to the edited span. Restricting
+    # the look-back avoids classifying later ordinary prose as a footnote.
+    tail = before[-120:]
+    matches = list(FOOTNOTE_LABEL_RE.finditer(tail))
+    return bool(matches)
 
 
 def _whitespace_gaps(value: str) -> tuple[str, set[int]]:
@@ -57,7 +102,9 @@ def _only_changes_layout_spacing(old: str, new: str) -> bool:
         return False
     changed_gaps = old_gaps.symmetric_difference(new_gaps)
     if not changed_gaps:
-        return False
+        # The non-whitespace text is identical, so this is leading/trailing
+        # whitespace only. Treat it as a layout artifact.
+        return True
     for gap in changed_gaps:
         left = old_base[gap - 1] if gap > 0 else ""
         right = old_base[gap] if gap < len(old_base) else ""
@@ -96,7 +143,32 @@ def _changes_genitive_chain(old: str, new: str) -> bool:
     if not old_words[0][:1].isupper() or not old_words[0].endswith("s"):
         return False
     differences = [(a, b) for a, b in zip(old_words, new_words) if a != b]
-    return len(differences) == 1 and differences[0][0].endswith("s") and differences[0][0][:-1] == differences[0][1]
+    return (
+        len(differences) == 1
+        and differences[0][0].endswith("s")
+        and differences[0][0][:-1] == differences[0][1]
+    )
+
+
+def _changes_terminal_s_morphology(old: str, new: str) -> bool:
+    """Protect adding/removing a terminal -s, often a genitive in older text."""
+    old_words = WORD_RE.findall(old)
+    new_words = WORD_RE.findall(new)
+    if len(old_words) != len(new_words) or not old_words:
+        return False
+    diffs = [(a.casefold(), b.casefold()) for a, b in zip(old_words, new_words) if a.casefold() != b.casefold()]
+    if len(diffs) != 1:
+        return False
+    a, b = diffs[0]
+    return (len(a) > 2 and a.endswith("s") and a[:-1] == b) or (
+        len(b) > 2 and b.endswith("s") and b[:-1] == a
+    )
+
+
+def _changes_apostrophe_genitive(old: str, new: str) -> bool:
+    """Protect model-invented apostrophe genitives such as 'Sebedeus' -> 'Sebedeus\''."""
+    normalize = lambda value: re.sub(r"[’']", "", value)
+    return old != new and normalize(old) == normalize(new) and ("'" in new or "’" in new)
 
 
 def _removes_sentence_linker(old: str, new: str) -> bool:
@@ -112,6 +184,77 @@ def _only_changes_final_punctuation(old: str, new: str) -> bool:
     """Detect punctuation-only changes at the end of a text unit."""
     strip_final = lambda value: re.sub(r"[\s.,;:!?…]+$", "", value)
     return old != new and strip_final(old) == strip_final(new)
+
+
+def _word_counter(text: str) -> Counter[str]:
+    return Counter(word.casefold() for word in WORD_RE.findall(text))
+
+
+def _changes_negation(old: str, new: str) -> bool:
+    old_words = _word_counter(old)
+    new_words = _word_counter(new)
+    return any(old_words[word] != new_words[word] for word in NEGATIONS)
+
+
+def _changes_risky_pronoun(old: str, new: str) -> bool:
+    """Protect pronoun removal/substitution; allow pure pronoun insertion for recall."""
+    old_words = _word_counter(old)
+    new_words = _word_counter(new)
+    return any(old_words[word] > new_words[word] for word in RISKY_PRONOUNS)
+
+
+def _only_reorders_words(old: str, new: str) -> bool:
+    """Protect pure content-word permutations while allowing common auxiliary inversion."""
+    old_words = [word.casefold() for word in WORD_RE.findall(old)]
+    new_words = [word.casefold() for word in WORD_RE.findall(new)]
+    if len(old_words) < 2 or old_words == new_words or Counter(old_words) != Counter(new_words):
+        return False
+
+    # Auxiliary movement is a common, legitimate grammatical correction, e.g.
+    # 'Kanske jag kan' -> 'Kanske kan jag'. Do not block that mechanically.
+    matcher = difflib.SequenceMatcher(None, old_words, new_words)
+    changed_words: set[str] = set()
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag != "equal":
+            changed_words.update(old_words[i1:i2])
+            changed_words.update(new_words[j1:j2])
+    if set(old_words) & AUXILIARIES:
+        return False
+    return True
+
+
+def _only_normalizes_protected_variant(old: str, new: str) -> bool:
+    """Protect explicit accepted variants such as 'i väg'/'iväg'."""
+    variant_re = re.compile(r"\b(?:i\s+väg|iväg|var\s+sin|varsin)\b", re.IGNORECASE)
+    if not (variant_re.search(old) or variant_re.search(new)):
+        return False
+
+    def canonical(value: str) -> str:
+        value = value.casefold()
+        value = re.sub(r"\bi\s+väg\b", "iväg", value)
+        value = re.sub(r"\bvar\s+sin\b", "varsin", value)
+        return re.sub(r"\s+", " ", value).strip()
+
+    return old != new and canonical(old) == canonical(new)
+
+
+def _changes_causal_for_to_for_att(old: str, new: str) -> bool:
+    """Protect the conjunction 'för' from automatic expansion to 'för att'."""
+    return old.strip().casefold() == "för" and re.sub(r"\s+", " ", new.strip().casefold()) == "för att"
+
+
+def _removes_exact_repetition(old: str, new: str) -> bool:
+    """Protect deliberate rhetorical repetition from automatic deletion."""
+    old_words = [word.casefold() for word in WORD_RE.findall(old)]
+    new_words = [word.casefold() for word in WORD_RE.findall(new)]
+    if len(old_words) != len(new_words) + 1:
+        return False
+    for index in range(len(old_words) - 1):
+        if old_words[index] == old_words[index + 1]:
+            candidate = old_words[:index] + old_words[index + 1:]
+            if candidate == new_words:
+                return True
+    return False
 
 
 class SuggestionValidator:
@@ -138,22 +281,40 @@ class SuggestionValidator:
                 reasons.append("ingen_förändring")
             elif suggestion.old not in unit.text:
                 reasons.append("originaltext_saknas_i_kontext")
-            elif suggestion.confidence != "hög":
-                reasons.append("endast_hög_säkerhet_tillåts")
             elif suggestion.error_type in {"versalisering", "inkonsekvens"}:
                 reasons.append("versalisering_eller_inkonsekvens_skyddas")
+            elif _changes_digits(suggestion.old, suggestion.new):
+                reasons.append("siffer_eller_fotnotsdata_skyddas")
             elif _only_removes_footnote_marker(suggestion.old, suggestion.new):
                 reasons.append("fotnotsmarkör_ska_ignoreras")
+            elif _is_in_footnote_text(unit.text, suggestion.old):
+                reasons.append("fotnotstext_ska_ignoreras")
             elif _contains_bible_reference(suggestion.old) or _contains_bible_reference(suggestion.new):
                 reasons.append("bibelhänvisning_ska_ignoreras")
+            elif _only_normalizes_protected_variant(suggestion.old, suggestion.new):
+                reasons.append("accepterad_skrivvariant_skyddas")
             elif _only_changes_layout_spacing(suggestion.old, suggestion.new):
                 reasons.append("layoutmellanslag_ska_ignoreras")
             elif _only_changes_case(suggestion.old, suggestion.new):
                 reasons.append("ren_versaländring_ska_ignoreras")
             elif _changes_capitalized_word(suggestion.old, suggestion.new):
                 reasons.append("egennamn_eller_titel_skyddas")
+            elif _changes_apostrophe_genitive(suggestion.old, suggestion.new):
+                reasons.append("apostrofgenitiv_skyddas")
             elif _changes_genitive_chain(suggestion.old, suggestion.new):
                 reasons.append("möjlig_genitivkedja_skyddas")
+            elif _changes_terminal_s_morphology(suggestion.old, suggestion.new):
+                reasons.append("möjlig_genitivform_skyddas")
+            elif _changes_negation(suggestion.old, suggestion.new):
+                reasons.append("negation_skyddas")
+            elif _changes_risky_pronoun(suggestion.old, suggestion.new):
+                reasons.append("pronomen_eller_syftning_skyddas")
+            elif _changes_causal_for_to_for_att(suggestion.old, suggestion.new):
+                reasons.append("kausalt_för_skyddas")
+            elif _only_reorders_words(suggestion.old, suggestion.new):
+                reasons.append("ren_ordföljdsändring_skyddas")
+            elif _removes_exact_repetition(suggestion.old, suggestion.new):
+                reasons.append("möjlig_avsiktlig_upprepning_skyddas")
             elif _removes_sentence_linker(suggestion.old, suggestion.new):
                 reasons.append("satsinledande_sambandsord_skyddas")
             elif unit.text.endswith(suggestion.old) and _only_changes_final_punctuation(
