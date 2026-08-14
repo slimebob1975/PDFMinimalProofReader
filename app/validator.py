@@ -27,6 +27,16 @@ BIBLE_REFERENCE_TOKEN_RE = re.compile(
     r"\d{1,3}:\d{1,3}(?:[-–]\d{1,3})?(?:f{1,2})?\.?"
 )
 
+# Skydda även fristående bokförkortningar när modellen bara vill ändra deras
+# punkt, t.ex. "Dom." -> "Dom" eller "Upp." -> "Upp".
+BIBLE_BOOK_ABBREVIATIONS = {
+    "mos", "jos", "dom", "sam", "kung", "krön", "neh", "est", "ps",
+    "ords", "pred", "jes", "jer", "klag", "hes", "dan", "hos", "oba",
+    "nah", "hab", "sef", "hagg", "sak", "mal", "matt", "mark", "luk",
+    "joh", "apg", "rom", "kor", "gal", "ef", "fil", "kol", "tess",
+    "tim", "tit", "filem", "hebr", "jak", "petr", "jud", "upp",
+}
+
 WORD_RE = re.compile(r"[A-Za-zÅÄÖåäö]+")
 DIGIT_RE = re.compile(r"\d+")
 SENTENCE_LINKERS = {"för", "men", "och", "eller", "utan", "ty"}
@@ -53,6 +63,46 @@ AUXILIARIES = {
 
 def _contains_bible_reference(text: str) -> bool:
     return bool(BIBLE_REFERENCE_TOKEN_RE.search(text))
+
+
+def _changes_standalone_bible_abbreviation(old: str, new: str) -> bool:
+    """Protect punctuation-only edits to standalone Bible-book abbreviations."""
+    old_raw = re.sub(r"\s+", " ", old.strip())
+    new_raw = re.sub(r"\s+", " ", new.strip())
+    old_norm = old_raw.casefold()
+    new_norm = new_raw.casefold()
+    if old_norm == new_norm:
+        return False
+    # Bibelboksförkortningar i referensapparaten är versaliserade. Detta
+    # undviker att t.ex. ett vanligt gemensamt ord "dom." fångas av regeln.
+    if not any(char.isupper() for char in old_raw + new_raw if char.isalpha()):
+        return False
+
+    def parse(value: str) -> tuple[str | None, bool]:
+        match = re.fullmatch(r"(?:(?:[1-3])\s+)?([a-zåäö]+)(\.)?", value)
+        if not match:
+            return None, False
+        return match.group(1), bool(match.group(2))
+
+    old_book, old_dot = parse(old_norm)
+    new_book, new_dot = parse(new_norm)
+    return (
+        old_book is not None
+        and old_book == new_book
+        and old_book in BIBLE_BOOK_ABBREVIATIONS
+        and old_dot != new_dot
+    )
+
+
+def _only_repositions_footnote_marker(old: str, new: str) -> bool:
+    """Protect layout-only movement of a footnote digit around punctuation."""
+    marker_attached = re.compile(r"(?<=[A-Za-zÅÄÖåäö])\d{1,2}")
+    if not (marker_attached.search(old) or marker_attached.search(new)):
+        return False
+
+    alnum = lambda value: re.sub(r"[^A-Za-zÅÄÖåäö0-9]", "", value)
+    punct = lambda value: sorted(re.findall(r"[.,;:!?]", value))
+    return old != new and alnum(old) == alnum(new) and punct(old) == punct(new)
 
 
 def _only_removes_footnote_marker(old: str, new: str) -> bool:
@@ -316,12 +366,16 @@ class SuggestionValidator:
                 reasons.append("siffer_eller_fotnotsdata_skyddas")
             elif _only_removes_footnote_marker(suggestion.old, suggestion.new):
                 reasons.append("fotnotsmarkör_ska_ignoreras")
+            elif _only_repositions_footnote_marker(suggestion.old, suggestion.new):
+                reasons.append("fotnotsmarkörens_layout_ska_ignoreras")
             elif _contains_footnote_source_token(suggestion.old) or _contains_footnote_source_token(suggestion.new):
                 reasons.append("fotnotskälla_ska_ignoreras")
             elif _is_in_footnote_text(unit.text, suggestion.old):
                 reasons.append("fotnotstext_ska_ignoreras")
             elif _contains_bible_reference(suggestion.old) or _contains_bible_reference(suggestion.new):
                 reasons.append("bibelhänvisning_ska_ignoreras")
+            elif _changes_standalone_bible_abbreviation(suggestion.old, suggestion.new):
+                reasons.append("bibelboksförkortning_ska_ignoreras")
             elif _only_normalizes_sa_sade(suggestion.old, suggestion.new):
                 reasons.append("sa_sade_variant_skyddas")
             elif _only_normalizes_protected_variant(suggestion.old, suggestion.new):
