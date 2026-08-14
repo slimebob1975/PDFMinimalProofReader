@@ -18,7 +18,7 @@ AVAILABLE_MODELS = [
 
 class Settings(BaseSettings):
     openai_api_key: str | None = None
-    openai_model: str = "gpt-5-mini"
+    openai_model: str = "gpt-5.4-mini"
     max_upload_mb: int = 30
     max_pages: int = 500
     batch_max_chars: int = 14_000
