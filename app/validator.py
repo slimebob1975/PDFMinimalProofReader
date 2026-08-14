@@ -15,6 +15,10 @@ FOOTNOTE_LABEL_RE = re.compile(
     r"(?:^|\s)\d{1,2}(?:KJV|KXII|KJV/NKJV|NKJV|SFB|B2000|B1917)?\s*:",
     re.IGNORECASE,
 )
+FOOTNOTE_SOURCE_RE = re.compile(
+    r"\b\d{1,2}(?:KJV/NKJV|KJV|KXII|NKJV|SFB|B2000|B1917)\b",
+    re.IGNORECASE,
+)
 
 # Avsiktligt konservativ igenkänning av bibelhänvisningar. Vi skyddar även
 # hänvisningar som PDF-layouten har skjutit in mitt i löptexten.
@@ -62,6 +66,11 @@ def _changes_digits(old: str, new: str) -> bool:
     return DIGIT_RE.findall(old) != DIGIT_RE.findall(new)
 
 
+def _contains_footnote_source_token(text: str) -> bool:
+    """Protect explicit source labels such as '1KJV' even without a colon."""
+    return bool(FOOTNOTE_SOURCE_RE.search(text))
+
+
 def _is_in_footnote_text(context: str, old: str) -> bool:
     """Detect edits inside common footnote/reference text such as '1KJV: ...'."""
     if not old:
@@ -70,11 +79,10 @@ def _is_in_footnote_text(context: str, old: str) -> bool:
     if start < 0:
         return False
     before = context[:start]
-    # A footnote label should be fairly close to the edited span. Restricting
-    # the look-back avoids classifying later ordinary prose as a footnote.
+    # A footnote label/source token should be fairly close to the edited span.
+    # Restricting the look-back avoids classifying later ordinary prose as a footnote.
     tail = before[-120:]
-    matches = list(FOOTNOTE_LABEL_RE.finditer(tail))
-    return bool(matches)
+    return bool(FOOTNOTE_LABEL_RE.search(tail) or FOOTNOTE_SOURCE_RE.search(tail))
 
 
 def _whitespace_gaps(value: str) -> tuple[str, set[int]]:
@@ -223,6 +231,13 @@ def _only_reorders_words(old: str, new: str) -> bool:
     return True
 
 
+def _only_normalizes_sa_sade(old: str, new: str) -> bool:
+    """Protect the accepted preterite variants 'sa' and 'sade'."""
+    old_norm = re.sub(r"\s+", " ", old.strip().casefold())
+    new_norm = re.sub(r"\s+", " ", new.strip().casefold())
+    return {old_norm, new_norm} == {"sa", "sade"}
+
+
 def _only_normalizes_protected_variant(old: str, new: str) -> bool:
     """Protect explicit accepted variants such as 'i väg'/'iväg'."""
     variant_re = re.compile(r"\b(?:i\s+väg|iväg|var\s+sin|varsin)\b", re.IGNORECASE)
@@ -239,8 +254,20 @@ def _only_normalizes_protected_variant(old: str, new: str) -> bool:
 
 
 def _changes_causal_for_to_for_att(old: str, new: str) -> bool:
-    """Protect the conjunction 'för' from automatic expansion to 'för att'."""
-    return old.strip().casefold() == "för" and re.sub(r"\s+", " ", new.strip().casefold()) == "för att"
+    """Protect causal 'för' before an explicit subject from expansion to 'för att'."""
+    old_norm = re.sub(r"\s+", " ", old.strip().casefold())
+    new_norm = re.sub(r"\s+", " ", new.strip().casefold())
+
+    if old_norm == "för" and new_norm == "för att":
+        return True
+
+    subject_pronouns = {
+        "jag", "du", "han", "hon", "den", "det", "vi", "ni", "de", "man", "vem", "vad"
+    }
+    match = re.fullmatch(r"för ([^ ]+)(.*)", old_norm)
+    if not match or match.group(1) not in subject_pronouns:
+        return False
+    return new_norm == f"för att {match.group(1)}{match.group(2)}"
 
 
 def _removes_exact_repetition(old: str, new: str) -> bool:
@@ -281,16 +308,22 @@ class SuggestionValidator:
                 reasons.append("ingen_förändring")
             elif suggestion.old not in unit.text:
                 reasons.append("originaltext_saknas_i_kontext")
+            elif suggestion.confidence.casefold() == "låg":
+                reasons.append("låg_säkerhet_ska_inte_exporteras")
             elif suggestion.error_type in {"versalisering", "inkonsekvens"}:
                 reasons.append("versalisering_eller_inkonsekvens_skyddas")
             elif _changes_digits(suggestion.old, suggestion.new):
                 reasons.append("siffer_eller_fotnotsdata_skyddas")
             elif _only_removes_footnote_marker(suggestion.old, suggestion.new):
                 reasons.append("fotnotsmarkör_ska_ignoreras")
+            elif _contains_footnote_source_token(suggestion.old) or _contains_footnote_source_token(suggestion.new):
+                reasons.append("fotnotskälla_ska_ignoreras")
             elif _is_in_footnote_text(unit.text, suggestion.old):
                 reasons.append("fotnotstext_ska_ignoreras")
             elif _contains_bible_reference(suggestion.old) or _contains_bible_reference(suggestion.new):
                 reasons.append("bibelhänvisning_ska_ignoreras")
+            elif _only_normalizes_sa_sade(suggestion.old, suggestion.new):
+                reasons.append("sa_sade_variant_skyddas")
             elif _only_normalizes_protected_variant(suggestion.old, suggestion.new):
                 reasons.append("accepterad_skrivvariant_skyddas")
             elif _only_changes_layout_spacing(suggestion.old, suggestion.new):
