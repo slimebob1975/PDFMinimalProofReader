@@ -12,11 +12,18 @@ from .models import ModelSuggestion, TextUnit, ValidatedSuggestion
 # ska inte bli korrekturförslag.
 FOOTNOTE_MARKER_RE = re.compile(r"(?<=[A-Za-zÅÄÖåäö])\d{1,2}(?=\s|$|[.,;:!?])")
 FOOTNOTE_LABEL_RE = re.compile(
-    r"(?:^|\s)\d{1,2}(?:KJV|KXII|KJV/NKJV|NKJV|SFB|B2000|B1917)?\s*:",
+    r"(?:^|\s)\d{1,2}(?:KJV|KXII|KJV/NKJV|NKJV|SFB|B2000|B1917|UN)?\s*:",
     re.IGNORECASE,
 )
 FOOTNOTE_SOURCE_RE = re.compile(
-    r"\b\d{1,2}(?:KJV/NKJV|KJV|KXII|NKJV|SFB|B2000|B1917)\b",
+    r"\b(?:\d{1,2})?(?:KJV/NKJV|KJV|KXII|NKJV|SFB|B2000|B1917|UN)\b",
+    re.IGNORECASE,
+)
+
+# Numeric fragments are also reference data when the model only sees the middle
+# of a reference sequence, e.g. "22:28 78:8" or "19:16.-18".
+BIBLE_REFERENCE_FRAGMENT_RE = re.compile(
+    r"\b\d{1,3}:\d{1,3}(?:\.?(?:[-–]\d{1,3}|f{1,2}))?\.?",
     re.IGNORECASE,
 )
 
@@ -73,9 +80,52 @@ UNCERTAIN_OR_STYLISTIC_MOTIVATION_RE = re.compile(
     re.IGNORECASE,
 )
 
+PREPOSITIONS = {
+    "av", "bakom", "bland", "efter", "enligt", "för", "från", "före", "genom",
+    "hos", "i", "inifrån", "inom", "intill", "kring", "med", "mellan", "mot",
+    "om", "på", "till", "under", "ur", "utan", "vid", "över",
+}
+
 
 def _contains_bible_reference(text: str) -> bool:
     return bool(BIBLE_REFERENCE_TOKEN_RE.search(text))
+
+
+def _contains_bible_reference_fragment(text: str) -> bool:
+    """Protect numeric reference fragments even when the book name lies outside old/new."""
+    return bool(BIBLE_REFERENCE_FRAGMENT_RE.search(text))
+
+
+def _touches_reference_or_note_apparatus(context: str, old: str) -> bool:
+    """Fail closed for edits in, or immediately adjacent to, references/notes.
+
+    The reviewer deliberately receives prose units that may also contain reference
+    apparatus. A model edit must not repair punctuation inside that apparatus or at
+    the prose/reference boundary.
+    """
+    if not old:
+        return False
+    start = context.find(old)
+    if start < 0 or context.find(old, start + 1) >= 0:
+        return False
+    end = start + len(old)
+    window = context[max(0, start - 80): min(len(context), end + 80)]
+    if FOOTNOTE_LABEL_RE.search(window) or FOOTNOTE_SOURCE_RE.search(window):
+        # Require the edited span to be reasonably close to the note token.
+        local = context[max(0, start - 35): min(len(context), end + 35)]
+        if FOOTNOTE_LABEL_RE.search(local) or FOOTNOTE_SOURCE_RE.search(local):
+            return True
+
+    # Directly inside a numeric Bible reference fragment.
+    if _contains_bible_reference_fragment(old):
+        return True
+
+    # Directly adjacent to an upcoming book+chapter reference, e.g.
+    # "jubla Jes. 55:12" -> "jubla. Jes. 55:12".
+    after = context[end:].lstrip()
+    if BIBLE_REFERENCE_TOKEN_RE.match(after):
+        return True
+    return False
 
 
 def _changes_standalone_bible_abbreviation(old: str, new: str) -> bool:
@@ -428,6 +478,102 @@ def _only_changes_comma_to_semicolon(old: str, new: str) -> bool:
     return len(diffs) == 1 and diffs[0] == (",", ";")
 
 
+def _optional_punctuation_normalization(context: str, old: str, new: str) -> bool:
+    """Protect punctuation preferences that are not mandatory corrections.
+
+    Keep deterministic cases such as vocatives and comma-before-att removal available,
+    but reject optional discourse commas and comma insertion before conjunctions.
+    """
+    old_norm = re.sub(r"\s+", " ", old.strip())
+    new_norm = re.sub(r"\s+", " ", new.strip())
+
+    # Optional comma after a short initial adverb/discourse marker, both insertion
+    # and deletion: "Därför," <-> "Därför" and "Ja" <-> "Ja,".
+    pairs = {(old_norm, new_norm), (new_norm, old_norm)}
+    for plain, punct in pairs:
+        if punct == plain + ",":
+            words = WORD_RE.findall(plain)
+            if 1 <= len(words) <= 4 and words and words[0].casefold() in {
+                "därför", "däremot", "således", "alltså", "dock", "nu", "då", "ja", "nej"
+            }:
+                return True
+
+    # Pure comma insertion immediately before a coordinating conjunction is
+    # normally stylistic in Swedish prose, not a minimal-proofreading certainty.
+    if new_norm != old_norm and new_norm.replace(",", "") == old_norm.replace(",", ""):
+        if re.search(r",\s+(?:och|men|eller|utan)\b", new_norm, re.IGNORECASE) and not re.search(
+            r",\s+(?:och|men|eller|utan)\b", old_norm, re.IGNORECASE
+        ):
+            return True
+    return False
+
+
+def _normalizes_possible_standard_variant(old: str, new: str) -> bool:
+    """Protect a small set of observed, grammatical usage variants.
+
+    These are deliberately asymmetric only in spelling; either direction is protected
+    because a minimal proofreader must not modernize one accepted form into another.
+    """
+    old_norm = re.sub(r"\s+", " ", old.strip().casefold())
+    new_norm = re.sub(r"\s+", " ", new.strip().casefold())
+    protected_pairs = {
+        frozenset({"full med", "full av"}),
+        frozenset({"även fast", "även om"}),
+        frozenset({"församlade", "samlade"}),
+        frozenset({"i famn", "i sin famn"}),
+    }
+    if frozenset({old_norm, new_norm}) in protected_pairs:
+        return True
+
+    # "kommer (att) + infinitiv" occurs in both forms in Swedish usage.
+    if re.fullmatch(r"kommer(?: att)? [a-zåäö]+", old_norm) and re.fullmatch(
+        r"kommer(?: att)? [a-zåäö]+", new_norm
+    ):
+        return old_norm.replace("kommer att ", "kommer ") == new_norm.replace("kommer att ", "kommer ")
+
+    # Historical/literary auxiliary ellipsis after "som om" should not be
+    # normalized automatically: "Som om det varit" -> "... hade varit".
+    if old_norm.startswith("som om ") and " varit" in old_norm and " hade varit" in new_norm:
+        return True
+
+    # Relative participle/perfect alternatives: "de som somnat in" ->
+    # "de som har somnat in". This is a usage choice, not an indisputable error.
+    if " som " in old_norm and " som har " in new_norm:
+        return old_norm.replace(" som ", " som har ", 1) == new_norm
+    return False
+
+
+def _changes_genitive_compound_spacing(old: str, new: str) -> bool:
+    """Protect genitive-like compounds from stylistic joining/hyphenation."""
+    old_norm = re.sub(r"\s+", " ", old.strip().casefold())
+    new_norm = re.sub(r"\s+", " ", new.strip().casefold())
+    m = re.fullmatch(r"([a-zåäö]+s) ([a-zåäö]+)", old_norm)
+    if not m:
+        return False
+    joined = m.group(1) + m.group(2)
+    hyphen = m.group(1) + "-" + m.group(2)
+    return new_norm in {joined, hyphen}
+
+
+def _adds_preposition_before_existing_preposition(context: str, old: str, new: str) -> bool:
+    """Reject local replacements that create stacked prepositions in full context."""
+    if not old or old not in context:
+        return False
+    start = context.find(old)
+    if context.find(old, start + 1) >= 0:
+        return False
+    old_words = [w.casefold() for w in WORD_RE.findall(old)]
+    new_words = [w.casefold() for w in WORD_RE.findall(new)]
+    if len(new_words) != len(old_words) + 1 or new_words[:len(old_words)] != old_words:
+        return False
+    added = new_words[-1]
+    if added not in PREPOSITIONS:
+        return False
+    after = context[start + len(old):].lstrip()
+    m = WORD_RE.match(after)
+    return bool(m and m.group(0).casefold() in PREPOSITIONS)
+
+
 def _adds_auxiliary_to_possible_ellipsis(
     context: str, suggestion: ModelSuggestion
 ) -> bool:
@@ -532,6 +678,8 @@ class SuggestionValidator:
                 reasons.append("versalisering_eller_inkonsekvens_skyddas")
             elif _changes_digits(suggestion.old, suggestion.new):
                 reasons.append("siffer_eller_fotnotsdata_skyddas")
+            elif _touches_reference_or_note_apparatus(unit.text, suggestion.old):
+                reasons.append("referens_eller_notapparat_ska_ignoreras")
             elif _only_removes_footnote_marker(suggestion.old, suggestion.new):
                 reasons.append("fotnotsmarkör_ska_ignoreras")
             elif _only_repositions_footnote_marker(suggestion.old, suggestion.new):
@@ -548,6 +696,8 @@ class SuggestionValidator:
                 reasons.append("sa_sade_variant_skyddas")
             elif _only_normalizes_protected_variant(suggestion.old, suggestion.new):
                 reasons.append("accepterad_skrivvariant_skyddas")
+            elif _normalizes_possible_standard_variant(suggestion.old, suggestion.new):
+                reasons.append("grammatiskt_möjlig_variant_skyddas")
             elif _only_changes_layout_spacing(suggestion.old, suggestion.new):
                 reasons.append("layoutmellanslag_ska_ignoreras")
             elif _only_changes_case(suggestion.old, suggestion.new):
@@ -556,6 +706,8 @@ class SuggestionValidator:
                 reasons.append("interpunktion_finns_redan_i_kontext")
             elif _only_changes_comma_to_semicolon(suggestion.old, suggestion.new):
                 reasons.append("komma_semikolon_stilval_skyddas")
+            elif _optional_punctuation_normalization(unit.text, suggestion.old, suggestion.new):
+                reasons.append("valfri_interpunktion_skyddas")
             elif _adds_optional_comma_after_initial_phrase(unit.text, suggestion.old, suggestion.new):
                 reasons.append("valfri_kommatering_efter_inledande_adverbial_skyddas")
             elif _changes_capitalized_word(suggestion.old, suggestion.new):
@@ -564,6 +716,8 @@ class SuggestionValidator:
                 reasons.append("apostrofgenitiv_skyddas")
             elif _changes_genitive_chain(suggestion.old, suggestion.new):
                 reasons.append("möjlig_genitivkedja_skyddas")
+            elif _changes_genitive_compound_spacing(suggestion.old, suggestion.new):
+                reasons.append("möjlig_genitivsammansättning_skyddas")
             elif _changes_terminal_s_morphology(suggestion.old, suggestion.new):
                 reasons.append("möjlig_genitivform_skyddas")
             elif _changes_negation(suggestion.old, suggestion.new):
@@ -580,6 +734,8 @@ class SuggestionValidator:
                 reasons.append("lexikal_förenkling_skyddas")
             elif _adds_auxiliary_to_possible_ellipsis(unit.text, suggestion):
                 reasons.append("möjlig_elliptisk_konstruktion_skyddas")
+            elif _adds_preposition_before_existing_preposition(unit.text, suggestion.old, suggestion.new):
+                reasons.append("ersättning_skapar_prepositionskrock")
             elif _removes_sentence_linker(suggestion.old, suggestion.new):
                 reasons.append("satsinledande_sambandsord_skyddas")
             elif unit.text.endswith(suggestion.old) and _only_changes_final_punctuation(
