@@ -203,6 +203,33 @@ API-nyckeln sparas inte i dessa filer.
 
 Katalogen `uploads/` bör normalt ligga i `.gitignore` så att uppladdade dokument, körningsdata och resultat inte råkar versionshanteras.
 
+## Adaptiv multipass-granskning
+
+Varje textbatch granskas flera gånger för att minska effekten av modellvarians. Standardstrategin är:
+
+- minst 5 modellkörningar per batch
+- högst 10 modellkörningar per batch
+- mättnad mäts parallellt på **nya råa felställen** och **nya validator-plausibla felställen (loci)** i texten
+- en körning räknas som mättad först när både den råa locus-marginalen och den plausibla locus-marginalen är högst 10 %
+- batchen stoppas efter 2 mättade körningar i följd, när minimikravet på 5 körningar är uppfyllt
+
+Likvärdiga korrigeringar dedupliceras fortfarande konservativt efter textenhet, position och den minsta ändrade textkärnan. Varje körning passerar dessutom den lokala validatorn. Rå discovery och plausibel discovery måste båda ha planat ut innan stoppserien får öka. Diagnostiken loggar därför bland annat `new_loci`, `loci_after_run`, `new_plausible_loci`, `plausible_loci_after_run`, `raw_marginal_gain` och `plausible_marginal_gain`.
+
+Om flera annars godkända korrigeringshypoteser konkurrerar om samma textställe betraktas locus som omtvistat och ingen variant exporteras. Validatorn skyddar också mot interpunktion som redan finns direkt efter träffen och mot rena lexikala stilstrykningar, exempelvis `förde iväg` → `förde`.
+
+Till modellen skickas endast `unit_id`, `reference` och den granskningsbara `text`-strängen. Sid-, spalt- och radmetadata stannar lokalt i applikationen så att modellen inte kan börja föreslå korrigeringar av extraktionsmetadata.
+
+Strategin kan justeras med miljövariabler:
+
+```text
+MULTIPASS_MIN_RUNS=5
+MULTIPASS_MAX_RUNS=10
+MULTIPASS_SATURATION_RATIO=0.10
+MULTIPASS_SATURATION_STREAK=2
+```
+
+`MULTIPASS_MAX_RUNS` är ett tak, inte ett mål. En batch som når mättnad tidigare avslutas därför innan tio anrop.
+
 ## Excel-resultat
 
 Fliken **Ändringsförslag** är avsiktligt förenklad. Den innehåller bland annat:
@@ -236,3 +263,8 @@ API-nyckeln används endast för API-anropet och sparas inte av applikationen.
 - avancerade tabeller, ovanlig typografi eller komplexa sidlayouter kan kräva ytterligare dokumentprofiler
 - fotnoter och korshänvisningar behandlas förenklat som del av textflödet
 - AI-modellen kan fortfarande göra misstag; Excel-filen är ett granskningsunderlag och ingen automatisk korrigering av originalet
+
+
+### Multipass v3.2
+
+V3.2 har ett hårt säkerhetsgolv på 5 minimikörningar även om en äldre `.env` anger ett lägre värde. Terminalen och `extraction.json` visar versionsmarkören `3.2`, konfigurerat minvärde och faktiskt använt minvärde. Early stopping kräver två på varandra följande körningar där både rå och plausibel locus-marginal är <= 10 %. Validatorn skyddar dessutom rena komma→semikolon-stilval och möjliga litterära ellipser där modellen vill lägga in ett hjälpverb efter komma.

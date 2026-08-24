@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     max_upload_mb: int = 30
     max_pages: int = 500
     batch_max_chars: int = 14_000
+    # Reviewer v3.2 har dessutom ett hårt säkerhetsgolv på 5, så en äldre .env
+    # med ett lägre värde kan inte återaktivera för aggressiv early stopping.
+    multipass_min_runs: int = 5
+    multipass_max_runs: int = 10
+    multipass_saturation_ratio: float = 0.10
+    multipass_saturation_streak: int = 2
     keep_run_files: bool = True
     uploads_dir: Path = Path("uploads")
 

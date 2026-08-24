@@ -11,7 +11,7 @@ from uuid import uuid4
 from .config import settings
 from .excel_exporter import export_batch_workbook, export_workbook
 from .pdf_extractor import build_units, detect_document_name, extract_lines
-from .reviewer import MockReviewer, OpenAIReviewer, make_batches
+from .reviewer import MULTIPASS_VERSION, MockReviewer, OpenAIReviewer, make_batches
 from .validator import SuggestionValidator
 
 
@@ -70,12 +70,25 @@ class ProofreadingService:
             api_key=api_key or settings.openai_api_key or "",
             policy_path=self.policy_path,
             max_chars=settings.batch_max_chars,
+            min_runs=settings.multipass_min_runs,
+            max_runs=settings.multipass_max_runs,
+            saturation_ratio=settings.multipass_saturation_ratio,
+            saturation_streak=settings.multipass_saturation_streak,
         )
         if not mock and not (api_key or settings.openai_api_key):
             raise ValueError("OpenAI API-nyckel saknas.")
 
-        estimated_calls = 0 if mock else len(make_batches(units, settings.batch_max_chars))
-        print(f"{prefix} Uppskattat antal GPT-anrop: {estimated_calls}", flush=True)
+        batch_count = 0 if mock else len(make_batches(units, settings.batch_max_chars))
+        effective_min_runs = 0 if mock else reviewer.min_runs
+        effective_max_runs = 0 if mock else reviewer.max_runs
+        estimated_calls_min = 0 if mock else batch_count * effective_min_runs
+        estimated_calls_max = 0 if mock else batch_count * effective_max_runs
+        print(
+            f"{prefix} Multipass v{MULTIPASS_VERSION}; GPT-anrop: adaptivt "
+            f"{estimated_calls_min}–{estimated_calls_max} ({batch_count} batcher; "
+            f"{effective_min_runs}–{effective_max_runs} per batch).",
+            flush=True,
+        )
 
         review_started = time.perf_counter()
         raw_suggestions = reviewer.review(units, model=model, run_id=run_id)
@@ -96,7 +109,10 @@ class ProofreadingService:
             "stored_pdf": str(stored_pdf_path.resolve()),
             "document": document,
             "unit_count": len(units),
-            "estimated_gpt_calls": estimated_calls,
+            "estimated_gpt_calls_min": estimated_calls_min,
+            "estimated_gpt_calls_max": estimated_calls_max,
+            "actual_gpt_calls": reviewer.last_diagnostics.get("actual_gpt_calls", 0),
+            "reviewer": reviewer.last_diagnostics,
             "raw_suggestion_count": len(raw_suggestions),
             "accepted_suggestion_count": len(accepted),
             "rejected_suggestion_count": len(rejected),

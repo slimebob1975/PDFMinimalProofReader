@@ -39,7 +39,7 @@ BIBLE_BOOK_ABBREVIATIONS = {
 
 WORD_RE = re.compile(r"[A-Za-zÅÄÖåäö]+")
 DIGIT_RE = re.compile(r"\d+")
-SENTENCE_LINKERS = {"för", "men", "och", "eller", "utan", "ty"}
+SENTENCE_LINKERS = {"för", "men", "och", "eller", "utan", "ty", "så"}
 NEGATIONS = {"inte", "icke", "ej"}
 RISKY_PRONOUNS = {
     "jag", "mig", "min", "mitt", "mina",
@@ -59,6 +59,19 @@ AUXILIARIES = {
     "vill", "ville", "bör", "borde", "får", "fick",
     "kommer", "kom",
 }
+
+# Sentence-initial function/linking words are capitalized by position, not because
+# they are names or titles. They must not trigger the proper-name protection.
+SENTENCE_INITIAL_COMMON_WORDS = {
+    "för", "men", "och", "eller", "utan", "ty", "så",
+    "på", "i", "av", "till", "från", "med", "om", "när",
+    "då", "efter", "före", "under", "över", "inte", "även", "såsom",
+}
+
+UNCERTAIN_OR_STYLISTIC_MOTIVATION_RE = re.compile(
+    r"\b(?:brukar|sannolikt|idiomatiskt|mer naturligt|bättre|föredras|verkar)\b",
+    re.IGNORECASE,
+)
 
 
 def _contains_bible_reference(text: str) -> bool:
@@ -177,7 +190,11 @@ def _only_changes_case(old: str, new: str) -> bool:
 
 
 def _changes_capitalized_word(old: str, new: str) -> bool:
-    """Return True when a lexical change alters a capitalized word/name."""
+    """Return True when a lexical change alters a plausible proper name/title.
+
+    Capitalization caused solely by sentence position (e.g. "För", "Men",
+    "Och") is explicitly excluded from this heuristic.
+    """
     old_words = WORD_RE.findall(old)
     new_words = WORD_RE.findall(new)
     matcher = difflib.SequenceMatcher(
@@ -187,7 +204,11 @@ def _changes_capitalized_word(old: str, new: str) -> bool:
         if tag == "equal":
             continue
         changed = old_words[i1:i2] + new_words[j1:j2]
-        if any(word[:1].isupper() for word in changed):
+        for word in changed:
+            if not word[:1].isupper():
+                continue
+            if word.casefold() in SENTENCE_INITIAL_COMMON_WORDS:
+                continue
             return True
     return False
 
@@ -236,6 +257,28 @@ def _removes_sentence_linker(old: str, new: str) -> bool:
     if not old_words or old_words[0].casefold() not in SENTENCE_LINKERS:
         return False
     return not new_words or new_words[0].casefold() != old_words[0].casefold()
+
+
+def _adds_optional_comma_after_initial_phrase(unit_text: str, old: str, new: str) -> bool:
+    """Protect optional stylistic comma insertion after a short initial phrase.
+
+    Swedish normally does not require an English-style comma after a short initial
+    adverbial such as "På den dagen". In a minimal proofreader this should not be
+    exported as an error merely because the model prefers a pause.
+    """
+    old_stripped = old.strip()
+    new_stripped = new.strip()
+    if new_stripped != old_stripped + ",":
+        return False
+    if not unit_text.startswith(old_stripped):
+        return False
+    words = WORD_RE.findall(old_stripped)
+    if not 1 <= len(words) <= 6:
+        return False
+    return words[0].casefold() in {
+        "på", "i", "efter", "före", "under", "över", "vid",
+        "från", "till", "då", "sedan", "nu", "här", "där",
+    }
 
 
 def _only_changes_final_punctuation(old: str, new: str) -> bool:
@@ -334,6 +377,118 @@ def _removes_exact_repetition(old: str, new: str) -> bool:
     return False
 
 
+def _punctuation_already_present(context: str, old: str, new: str) -> bool:
+    """Reject adding punctuation that already follows the source span."""
+    if not old or not new.startswith(old) or len(new) <= len(old):
+        return False
+    added = new[len(old):]
+    if not added or any(char not in ".,;:!?…" for char in added):
+        return False
+    start = 0
+    while True:
+        index = context.find(old, start)
+        if index < 0:
+            return False
+        if context[index + len(old): index + len(old) + len(added)] == added:
+            return True
+        start = index + 1
+
+
+def _only_deletes_lexical_material(old: str, new: str) -> bool:
+    """Protect deletion-only lexical simplifications in a minimal proofreader."""
+    old_words = [word.casefold() for word in WORD_RE.findall(old)]
+    new_words = [word.casefold() for word in WORD_RE.findall(new)]
+    if len(old_words) <= len(new_words) or not new_words:
+        return False
+    pos = 0
+    for word in old_words:
+        if pos < len(new_words) and word == new_words[pos]:
+            pos += 1
+    if pos != len(new_words):
+        return False
+    if any(old_words[i] == old_words[i + 1] for i in range(len(old_words) - 1)):
+        return False
+    return True
+
+
+def _only_changes_comma_to_semicolon(old: str, new: str) -> bool:
+    """Protect comma/semicolon preference when no lexical material changes."""
+    if len(old) != len(new) or old == new:
+        return False
+    diffs = [(a, b) for a, b in zip(old, new) if a != b]
+    return len(diffs) == 1 and diffs[0] == (",", ";")
+
+
+def _adds_auxiliary_to_possible_ellipsis(
+    context: str, suggestion: ModelSuggestion
+) -> bool:
+    """Protect possible literary ellipsis from automatic finite-verb insertion.
+
+    This is deliberately narrow: the source span must begin immediately after a
+    comma, the proposed correction must add an auxiliary, and the model must
+    explicitly argue that a finite/helper verb is missing.
+    """
+    old = suggestion.old
+    new = suggestion.new
+    if suggestion.error_type != "dubblerat_saknat_ord" or not old or old not in context:
+        return False
+    start = context.find(old)
+    if start < 0 or context.find(old, start + 1) >= 0:
+        return False
+    if not context[:start].rstrip().endswith(","):
+        return False
+    old_words = [word.casefold() for word in WORD_RE.findall(old)]
+    new_words = [word.casefold() for word in WORD_RE.findall(new)]
+    added_aux = any(word in AUXILIARIES and word not in old_words for word in new_words)
+    if not added_aux:
+        return False
+    motivation = (suggestion.motivation or "").casefold()
+    return bool(re.search(r"(?:saknar (?:ett )?finitt verb|hjälpverb|grammatiskt fullständig)", motivation))
+
+
+def _minimal_changed_span(old: str, new: str) -> tuple[int, int]:
+    prefix = 0
+    max_prefix = min(len(old), len(new))
+    while prefix < max_prefix and old[prefix] == new[prefix]:
+        prefix += 1
+    suffix = 0
+    max_suffix = min(len(old) - prefix, len(new) - prefix)
+    while suffix < max_suffix and old[len(old) - 1 - suffix] == new[len(new) - 1 - suffix]:
+        suffix += 1
+    old_end = len(old) - suffix if suffix else len(old)
+    return prefix, old_end
+
+
+
+def _is_uniquely_anchored(context: str, old: str) -> bool:
+    """Require a model suggestion to identify one unambiguous source span."""
+    if not old:
+        return False
+    first = context.find(old)
+    return first >= 0 and context.find(old, first + 1) < 0
+
+
+def _has_uncertain_or_stylistic_motivation(suggestion: ModelSuggestion) -> bool:
+    """Precision-first guard for medium-confidence, non-rule-based motivations."""
+    if suggestion.confidence.casefold() == "hög":
+        return False
+    return bool(UNCERTAIN_OR_STYLISTIC_MOTIVATION_RE.search(suggestion.motivation or ""))
+
+def _accepted_span(item: ValidatedSuggestion, unit: TextUnit) -> tuple[int, int] | None:
+    first = unit.text.find(item.old)
+    if first < 0 or unit.text.find(item.old, first + 1) >= 0:
+        return None
+    rel_start, rel_end = _minimal_changed_span(item.old, item.new)
+    return first + rel_start, first + rel_end
+
+
+def _spans_conflict(a: tuple[int, int], b: tuple[int, int]) -> bool:
+    a_start, a_end = a
+    b_start, b_end = b
+    tolerance = 2 if a_start == a_end or b_start == b_end else 0
+    return a_start <= b_end + tolerance and b_start <= a_end + tolerance
+
+
 class SuggestionValidator:
     def __init__(self, max_replacement_chars: int = 220, max_change_ratio: float = 0.60):
         self.max_replacement_chars = max_replacement_chars
@@ -358,8 +513,12 @@ class SuggestionValidator:
                 reasons.append("ingen_förändring")
             elif suggestion.old not in unit.text:
                 reasons.append("originaltext_saknas_i_kontext")
+            elif not _is_uniquely_anchored(unit.text, suggestion.old):
+                reasons.append("originaltext_inte_entydigt_lokaliserbar")
             elif suggestion.confidence.casefold() == "låg":
                 reasons.append("låg_säkerhet_ska_inte_exporteras")
+            elif _has_uncertain_or_stylistic_motivation(suggestion):
+                reasons.append("osäker_eller_stilistisk_motivering")
             elif suggestion.error_type in {"versalisering", "inkonsekvens"}:
                 reasons.append("versalisering_eller_inkonsekvens_skyddas")
             elif _changes_digits(suggestion.old, suggestion.new):
@@ -384,6 +543,12 @@ class SuggestionValidator:
                 reasons.append("layoutmellanslag_ska_ignoreras")
             elif _only_changes_case(suggestion.old, suggestion.new):
                 reasons.append("ren_versaländring_ska_ignoreras")
+            elif _punctuation_already_present(unit.text, suggestion.old, suggestion.new):
+                reasons.append("interpunktion_finns_redan_i_kontext")
+            elif _only_changes_comma_to_semicolon(suggestion.old, suggestion.new):
+                reasons.append("komma_semikolon_stilval_skyddas")
+            elif _adds_optional_comma_after_initial_phrase(unit.text, suggestion.old, suggestion.new):
+                reasons.append("valfri_kommatering_efter_inledande_adverbial_skyddas")
             elif _changes_capitalized_word(suggestion.old, suggestion.new):
                 reasons.append("egennamn_eller_titel_skyddas")
             elif _changes_apostrophe_genitive(suggestion.old, suggestion.new):
@@ -402,6 +567,10 @@ class SuggestionValidator:
                 reasons.append("ren_ordföljdsändring_skyddas")
             elif _removes_exact_repetition(suggestion.old, suggestion.new):
                 reasons.append("möjlig_avsiktlig_upprepning_skyddas")
+            elif _only_deletes_lexical_material(suggestion.old, suggestion.new):
+                reasons.append("lexikal_förenkling_skyddas")
+            elif _adds_auxiliary_to_possible_ellipsis(unit.text, suggestion):
+                reasons.append("möjlig_elliptisk_konstruktion_skyddas")
             elif _removes_sentence_linker(suggestion.old, suggestion.new):
                 reasons.append("satsinledande_sambandsord_skyddas")
             elif unit.text.endswith(suggestion.old) and _only_changes_final_punctuation(
@@ -444,4 +613,42 @@ class SuggestionValidator:
                     confidence=suggestion.confidence,
                 )
             )
+        # Precision-first conflict pass: multiple incompatible accepted fixes at
+        # the same source locus indicate model uncertainty. Export none of them.
+        conflicted: set[int] = set()
+        spans: list[tuple[int, str, tuple[int, int]]] = []
+        for index, item in enumerate(accepted):
+            source_unit = unit_map.get(item.unit_id)
+            if source_unit is None:
+                continue
+            span = _accepted_span(item, source_unit)
+            if span is not None:
+                spans.append((index, item.unit_id, span))
+        for pos, (i, unit_id, span_i) in enumerate(spans):
+            for j, unit_id_j, span_j in spans[pos + 1:]:
+                if unit_id == unit_id_j and _spans_conflict(span_i, span_j):
+                    conflicted.add(i)
+                    conflicted.add(j)
+
+        if conflicted:
+            kept: list[ValidatedSuggestion] = []
+            for index, item in enumerate(accepted):
+                if index in conflicted:
+                    rejected.append({
+                        "suggestion": {
+                            "unit_id": item.unit_id,
+                            "old": item.old,
+                            "new": item.new,
+                            "error_type": item.error_type,
+                            "motivation": item.motivation,
+                            "confidence": item.confidence,
+                        },
+                        "reasons": ["konkurrerande_korrigeringshypoteser_samma_felställe"],
+                    })
+                else:
+                    kept.append(item)
+            accepted = kept
+
+        for index, item in enumerate(accepted, start=1):
+            item.suggestion_id = index
         return accepted, rejected
