@@ -268,3 +268,19 @@ API-nyckeln används endast för API-anropet och sparas inte av applikationen.
 ### Multipass v3.2
 
 V3.2 har ett hårt säkerhetsgolv på 5 minimikörningar även om en äldre `.env` anger ett lägre värde. Terminalen och `extraction.json` visar versionsmarkören `3.2`, konfigurerat minvärde och faktiskt använt minvärde. Early stopping kräver två på varandra följande körningar där både rå och plausibel locus-marginal är <= 10 %. Validatorn skyddar dessutom rena komma→semikolon-stilval och möjliga litterära ellipser där modellen vill lägga in ett hjälpverb efter komma.
+
+
+### Multipass v3.3
+
+V3.3 behåller v3.2:s stoppmekanik och fokuserar endast på exportprecision. Modellen instrueras nu uttryckligen att arbeta precision-first: möjliga historiska, idiomatiska och stilistiska varianter ska lämnas orörda när ett konkret språkfel och en entydig minimal korrigering inte kan slås fast.
+
+Efter den vanliga validatorn används en multipass-konsensusgrind före export. Alla råa modellförslag finns fortfarande kvar i `suggestions_raw.json` och i reviewer-diagnostiken, men ett förslag exporteras bara om `confidence` är `hög` och samma korrigering har observerats minst följande antal gånger i den aktuella batchen:
+
+- `stavning`, `böjning_kongruens`, `särskrivning_sammanskrivning`: 2 träffar
+- `grammatik`, `preposition`, `dubblerat_saknat_ord`: 3 träffar
+- `kommatering`, `interpunktion`: 4 träffar
+- övriga feltyper: 3 träffar
+
+Förslag som annars hade passerat validatorn men inte konsensusgrinden sparas bland avvisade förslag med orsaken `multipass_konsensus_kräver_hög_säkerhet` eller `otillräcklig_multipass_konsensus`, tillsammans med observerat och krävt antal träffar. `extraction.json` innehåller dessutom `consensus_policy` och `consensus_rejected_suggestion_count`.
+
+Skyddet för accepterade skriv- och stilvarianter fungerar nu även när varianten ligger inuti en längre föreslagen ändring. Det omfattar bland annat `sa`/`sade`, `kommer vara`/`kommer att vara`, `istället`/`i stället`, `emot`/`mot`, `grå`/`gråa`, `i väg`/`iväg` och `var sin`/`varsin`.
