@@ -284,3 +284,7 @@ Efter den vanliga validatorn används en multipass-konsensusgrind före export. 
 Förslag som annars hade passerat validatorn men inte konsensusgrinden sparas bland avvisade förslag med orsaken `multipass_konsensus_kräver_hög_säkerhet` eller `otillräcklig_multipass_konsensus`, tillsammans med observerat och krävt antal träffar. `extraction.json` innehåller dessutom `consensus_policy` och `consensus_rejected_suggestion_count`.
 
 Skyddet för accepterade skriv- och stilvarianter fungerar nu även när varianten ligger inuti en längre föreslagen ändring. Det omfattar bland annat `sa`/`sade`, `kommer vara`/`kommer att vara`, `istället`/`i stället`, `emot`/`mot`, `grå`/`gråa`, `i väg`/`iväg` och `var sin`/`varsin`.
+
+## Multipass v3.4 – precisionstätning
+
+V3.4 lämnar multipass- och konsensusnivåerna oförändrade och tätar endast de återstående precisionsläckorna från den stora v3.3-batchen. Referens- och notapparat skyddas absolut, även för numeriska referensfragment och ändringar precis före en hänvisning. Valfria diskurs-/konjunktionskomman skyddas. Ett litet antal grammatiskt möjliga normaliseringar (bl.a. `full med/full av`, `även fast/även om`, `kommer + infinitiv/kommer att + infinitiv`) behandlas som varianter. Genitivliknande sammansättningar skyddas mot automatisk hopskrivning/bindestreckning, och lokala ersättningar som skulle skapa en prepositionskrock i full kontext avvisas.
