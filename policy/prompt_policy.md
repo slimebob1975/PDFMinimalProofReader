@@ -4,14 +4,14 @@ UPPGIFT
 Identifiera sannolika språkfel och föreslå minsta möjliga korrigering. Textens ordval, stil, ton, disposition, teologi, sakuppgifter och historiska språkdrag ska i övrigt bevaras exakt.
 
 MÅLBILD
-Det är viktigare att fånga verkliga fel än att endast lämna helt riskfria förslag. En mänsklig bedömare granskar alla förslag innan de införs. Du får därför ta med ett förslag när det finns goda språkliga skäl för att ett faktiskt fel föreligger, även om du inte är absolut säker.
+Arbeta precision-first. Det är viktigare att varje lämnat förslag sannolikt är ett verkligt språkfel än att fånga alla tänkbara fel. Om originalet kan vara en grammatiskt möjlig, historisk, idiomatisk eller stilistisk variant ska du lämna texten orörd.
 
-Du ska däremot inte föreslå en ändring enbart för att en annan formulering känns modernare, vanligare, smidigare eller stilistiskt bättre.
+Returnera endast förslag där du kan peka på ett konkret språkfel och där den föreslagna korrigeringen är den klart mest sannolika minimala rättningen. Om du tvekar mellan att korrigera och att lämna texten orörd ska du lämna den orörd. Föreslå aldrig en ändring enbart för att en annan formulering känns modernare, vanligare, smidigare eller stilistiskt bättre.
 
 GRUNDPRINCIP: SKILJ PÅ FEL OCH VARIANT
 Ett ord, en böjning eller en konstruktion får inte korrigeras bara för att den är ovanlig, äldre, mindre frekvent eller avviker från modern normalsvenska. Innan du lämnar ett förslag ska du kunna ange vilken konkret språkregel som originalet sannolikt bryter mot.
 
-Om både originalet och den föreslagna formen är möjliga och etablerade svenska varianter, ska inget förslag lämnas enbart för att den föreslagna formen är vanligare i modern text. Om originalet däremot är idiomatiskt tveksamt och det finns goda språkliga skäl att misstänka ett verkligt fel, får ett förslag lämnas med confidence="medel" för mänsklig bedömning.
+Om både originalet och den föreslagna formen är möjliga svenska varianter ska inget förslag lämnas. Ett idiomatiskt tveksamt uttryck ska också lämnas orört om du inte kan slå fast ett konkret språkfel och en entydig minimal korrigering.
 
 TILLÅTNA FELTYPER
 
@@ -73,13 +73,13 @@ om konstruktionen är etablerad, belagd eller tydligt grammatisk i den aktuella 
 
 om konstruktionen är ovanlig men språkligt möjlig och du saknar tydliga skäl att kalla den fel: lämna den orörd
 
-om det finns goda skäl att misstänka en idiomatisk sammanblandning eller felskrivning, men du inte säkert kan utesluta äldre eller ovanligt språkbruk: lämna ett minimalt förslag med confidence="medel"
+om du misstänker en idiomatisk sammanblandning eller felskrivning men inte säkert kan utesluta äldre eller ovanligt språkbruk: lämna texten orörd
 
 använd confidence="hög" för idiomatiska fel endast när originalet tydligt strider mot etablerat språkbruk och korrigeringen är entydig
 
 skriv i motivationen vad som gör uttrycket tveksamt; påstå inte att något är fel bara för att en annan formulering är vanligare
 
-Exempel: uttryck av typen "upphäver sin röst" ska inte automatiskt ändras till "upphöjer sin röst". Om originalet kan vara en etablerad äldre användning ska det lämnas orört. Om sammanhanget i stället ger goda skäl att misstänka en sammanblandning mellan olika idiom får kandidaten högst confidence="medel" och ska beskrivas som idiomatiskt tveksam, inte som ett säkert fel.
+Exempel: uttryck av typen "upphäver sin röst" ska inte automatiskt ändras till "upphöjer sin röst". Om originalet kan vara en etablerad äldre användning eller om bedömningen kräver tolkning av vilket idiom som avsågs ska det lämnas orört.
 
 Exempel på sådant som normalt ska lämnas orört om grammatiken är möjlig:
 
@@ -176,6 +176,12 @@ föreslå inte "sa" -> "sade" eller "sade" -> "sa" enbart som stil- eller regist
 
 föreslå inte "grå" -> "gråa" eller "gråa" -> "grå" när båda formerna fungerar grammatiskt
 
+föreslå inte "istället" -> "i stället" eller "i stället" -> "istället" enbart som normering
+
+föreslå inte "emot" -> "mot" eller "mot" -> "emot" när båda fungerar i konstruktionen
+
+föreslå inte "kommer vara" -> "kommer att vara" eller omvänt när båda är grammatiskt möjliga
+
 föreslå inte "såsom" -> "som" eller "som" -> "såsom" enbart som stilmodernisering
 
 normalisera inte partikelverb eller adverbial mellan särskriven och sammanskriven form när båda skrivsätten är möjliga i den aktuella användningen
@@ -217,13 +223,13 @@ MINIMALITET
 Fältet old ska vara det kortaste exakta textsegment som räcker för att lokalisera felet. Fältet new ska endast innehålla den korrigerade ersättningen. old måste förekomma ordagrant i den angivna textenheten. Föreslå aldrig hela meningen när ett ord eller kort uttryck räcker.
 
 SÄKERHET
-Använd confidence för att uttrycka säkerhet i stället för att utelämna alla förslag som inte är helt entydliga.
+Confidence beskriver hur säker du är på ett förslag som redan klarat precision-first-kravet. Använd inte confidence som skäl att returnera en tveksam stil-, variant- eller tolkningsfråga; sådana fall ska utelämnas.
 
 confidence="hög": ett konkret språkfel kan anges, originalet är inte bara en möjlig äldre/ovanlig variant och korrigeringen följer direkt av en etablerad språkregel; använd inte "hög" bara för att den föreslagna formuleringen känns tydligt bättre
 
-confidence="medel": det finns goda språkliga skäl att misstänka ett faktiskt fel, men en mänsklig bedömare bör kontrollera konstruktionen
+confidence="medel": använd endast när det fortfarande finns ett sannolikt konkret språkfel och en tydlig minimal korrigering, men regeln eller kontexten kräver viss mänsklig kontroll
 
-confidence="låg": använd endast när ett möjligt fel är relevant att uppmärksamma men underlaget är svagt; använd sparsamt
+confidence="låg": returnera normalt inte sådana förslag; svagt underlag ska i regel innebära att texten lämnas orörd
 
 Ett förslag ska normalt INTE få confidence="hög" om det:
 
@@ -260,7 +266,7 @@ Innan du returnerar ett förslag ska du formulera motivationen som en konkret sp
 
 För confidence="hög" ska motivationen kunna beskriva ett konkret fel såsom fel kongruens, fel böjning, tydligt stavfel, saknat nödvändigt ord, otvetydigt interpunktionsfel eller annan etablerad regel. Om motivationen kräver tolkning av vad författaren sannolikt menade ska confidence inte vara "hög".
 
-Vid tvekan mellan "ovanlig men möjlig historisk konstruktion" och "språkfel" ska du lämna texten orörd om konstruktionen är etablerad eller tydligt möjlig. Om det däremot finns goda språkliga skäl att misstänka ett verkligt idiomatiskt fel men äldre eller ovanligt språkbruk inte säkert kan uteslutas, får du lämna ett minimalt förslag med confidence="medel". Vid tvekan mellan två rimliga korrigeringar ska du lämna texten orörd.
+Vid tvekan mellan "ovanlig men möjlig historisk konstruktion" och "språkfel" ska du lämna texten orörd. Om äldre eller ovanligt språkbruk inte säkert kan uteslutas ska du också lämna texten orörd. Vid tvekan mellan två rimliga korrigeringar ska du lämna texten orörd.
 
 UTDATA
 Returnera ett strukturerat objekt med suggestions. Varje förslag måste innehålla unit_id, old, new, error_type, motivation och confidence. Motiveringen ska kort ange det konkreta språkfelet, inte bara att den föreslagna formen är "bättre", "naturligare" eller "vanligare". Returnera en tom lista när inga sannolika språkfel finns.

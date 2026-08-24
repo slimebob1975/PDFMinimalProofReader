@@ -324,26 +324,35 @@ def _only_reorders_words(old: str, new: str) -> bool:
     return True
 
 
+def _canonicalize_protected_variants(value: str) -> str:
+    """Canonicalize accepted variants even when embedded in a longer phrase."""
+    value = re.sub(r"\s+", " ", value.strip().casefold())
+    substitutions = (
+        (r"\bi\s+stället\b", "istället"),
+        (r"\bi\s+väg\b", "iväg"),
+        (r"\bvar\s+sin\b", "varsin"),
+        (r"\bkommer\s+att\s+vara\b", "kommer vara"),
+        (r"\bsade\b", "sa"),
+        (r"\bemot\b", "mot"),
+        (r"\bgråa\b", "grå"),
+    )
+    for pattern, replacement in substitutions:
+        value = re.sub(pattern, replacement, value)
+    return value
+
+
 def _only_normalizes_sa_sade(old: str, new: str) -> bool:
-    """Protect the accepted preterite variants 'sa' and 'sade'."""
-    old_norm = re.sub(r"\s+", " ", old.strip().casefold())
-    new_norm = re.sub(r"\s+", " ", new.strip().casefold())
-    return {old_norm, new_norm} == {"sa", "sade"}
+    """Protect 'sa'/'sade' also inside a longer otherwise unchanged phrase."""
+    if not (re.search(r"\bsa(?:de)?\b", old, re.IGNORECASE) or re.search(r"\bsa(?:de)?\b", new, re.IGNORECASE)):
+        return False
+    return old != new and _canonicalize_protected_variants(old) == _canonicalize_protected_variants(new)
 
 
 def _only_normalizes_protected_variant(old: str, new: str) -> bool:
-    """Protect explicit accepted variants such as 'i väg'/'iväg'."""
-    variant_re = re.compile(r"\b(?:i\s+väg|iväg|var\s+sin|varsin)\b", re.IGNORECASE)
-    if not (variant_re.search(old) or variant_re.search(new)):
+    """Protect accepted style/usage variants, including embedded occurrences."""
+    if old == new:
         return False
-
-    def canonical(value: str) -> str:
-        value = value.casefold()
-        value = re.sub(r"\bi\s+väg\b", "iväg", value)
-        value = re.sub(r"\bvar\s+sin\b", "varsin", value)
-        return re.sub(r"\s+", " ", value).strip()
-
-    return old != new and canonical(old) == canonical(new)
+    return _canonicalize_protected_variants(old) == _canonicalize_protected_variants(new)
 
 
 def _changes_causal_for_to_for_att(old: str, new: str) -> bool:

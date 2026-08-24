@@ -153,3 +153,35 @@ def test_rejects_auxiliary_insertion_in_possible_literary_ellipsis():
     accepted, rejected = SuggestionValidator().validate([suggestion], [u])
     assert not accepted
     assert rejected[0]["reasons"] == ["möjlig_elliptisk_konstruktion_skyddas"]
+
+
+def _variant_unit(text: str) -> TextUnit:
+    return TextUnit("unit_00001", "Test", 1, 1, False, "Test 1:1", 1, 1, None, "vänster", 1, 2, text, [text])
+
+
+def test_rejects_sa_sade_variant_inside_longer_phrase():
+    text = "Han sa till folket att gå."
+    suggestion = ModelSuggestion(
+        unit_id="unit_00001", old="Han sa till folket", new="Han sade till folket",
+        error_type="annat_entydigt_språkfel", motivation="Normering.", confidence="hög"
+    )
+    accepted, rejected = SuggestionValidator().validate([suggestion], [_variant_unit(text)])
+    assert not accepted
+    assert rejected[0]["reasons"] == ["sa_sade_variant_skyddas"]
+
+
+def test_rejects_embedded_accepted_style_variants():
+    cases = [
+        ("Han kommer vara där.", "kommer vara", "kommer att vara"),
+        ("Han gick istället hem.", "gick istället hem", "gick i stället hem"),
+        ("De gick emot staden.", "gick emot staden", "gick mot staden"),
+        ("De grå kläderna låg där.", "De grå kläderna", "De gråa kläderna"),
+    ]
+    for text, old, new in cases:
+        suggestion = ModelSuggestion(
+            unit_id="unit_00001", old=old, new=new,
+            error_type="annat_entydigt_språkfel", motivation="Normering.", confidence="hög"
+        )
+        accepted, rejected = SuggestionValidator().validate([suggestion], [_variant_unit(text)])
+        assert not accepted, (old, new)
+        assert rejected[0]["reasons"] == ["accepterad_skrivvariant_skyddas"], (old, new, rejected)

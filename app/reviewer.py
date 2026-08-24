@@ -11,8 +11,33 @@ from .models import ModelSuggestion, SuggestionEnvelope, TextUnit
 from .validator import SuggestionValidator
 
 
-MULTIPASS_VERSION = "3.2"
+MULTIPASS_VERSION = "3.3"
 MIN_MULTIPASS_RUNS = 5
+
+CONSENSUS_MIN_HITS = {
+    "stavning": 2,
+    "böjning_kongruens": 2,
+    "särskrivning_sammanskrivning": 2,
+    "grammatik": 3,
+    "preposition": 3,
+    "dubblerat_saknat_ord": 3,
+    "kommatering": 4,
+    "interpunktion": 4,
+}
+DEFAULT_CONSENSUS_MIN_HITS = 3
+
+
+def required_consensus_hits(error_type: str) -> int:
+    return CONSENSUS_MIN_HITS.get(error_type, DEFAULT_CONSENSUS_MIN_HITS)
+
+
+def consensus_rejection_reason(suggestion: ModelSuggestion, hit_count: int) -> str | None:
+    """Precision-first export gate based on repeated independent observations."""
+    if suggestion.confidence.casefold() != "hög":
+        return "multipass_konsensus_kräver_hög_säkerhet"
+    if hit_count < required_consensus_hits(suggestion.error_type):
+        return "otillräcklig_multipass_konsensus"
+    return None
 
 
 class Reviewer(Protocol):
@@ -183,6 +208,7 @@ class OpenAIReviewer:
         self.saturation_ratio = saturation_ratio
         self.saturation_streak = saturation_streak
         self.last_diagnostics: dict = {}
+        self.last_support: dict[tuple[str, str, str], dict] = {}
         self.saturation_validator = SuggestionValidator()
 
     def review(
@@ -394,6 +420,11 @@ class OpenAIReviewer:
         self.last_diagnostics = {
             "strategy": "adaptive_multipass",
             "version": MULTIPASS_VERSION,
+            "consensus_policy": {
+                "requires_high_confidence": True,
+                "min_hits_by_error_type": CONSENSUS_MIN_HITS,
+                "default_min_hits": DEFAULT_CONSENSUS_MIN_HITS,
+            },
             "configured_min_runs": configured_min_runs,
             "min_runs": self.min_runs,
             "max_runs": self.max_runs,
@@ -410,6 +441,14 @@ class OpenAIReviewer:
             f"{len(all_unique)} unika förslag efter sammanslagning.",
             flush=True,
         )
+        self.last_support = {
+            (observed.suggestion.unit_id, observed.suggestion.old, observed.suggestion.new): {
+                "hit_count": observed.hit_count,
+                "run_numbers": list(observed.run_numbers),
+                "required_hits": required_consensus_hits(observed.suggestion.error_type),
+            }
+            for observed in all_unique.values()
+        }
         return [observed.suggestion for observed in all_unique.values()]
 
 
@@ -421,6 +460,7 @@ class MockReviewer:
             "strategy": "mock",
             "actual_gpt_calls": 0,
         }
+        self.last_support: dict[tuple[str, str, str], dict] = {}
 
     def review(
         self,

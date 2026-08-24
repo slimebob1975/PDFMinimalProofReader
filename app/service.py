@@ -11,7 +11,14 @@ from uuid import uuid4
 from .config import settings
 from .excel_exporter import export_batch_workbook, export_workbook
 from .pdf_extractor import build_units, detect_document_name, extract_lines
-from .reviewer import MULTIPASS_VERSION, MockReviewer, OpenAIReviewer, make_batches
+from .reviewer import (
+    MULTIPASS_VERSION,
+    MockReviewer,
+    OpenAIReviewer,
+    consensus_rejection_reason,
+    make_batches,
+    required_consensus_hits,
+)
 from .validator import SuggestionValidator
 
 
@@ -96,8 +103,51 @@ class ProofreadingService:
 
         print(f"{prefix} Validerar {len(raw_suggestions)} råa förslag...", flush=True)
         accepted, rejected = SuggestionValidator().validate(raw_suggestions, units)
+
+        consensus_rejected = 0
+        if not mock:
+            kept = []
+            support_map = getattr(reviewer, "last_support", {})
+            raw_by_key = {(item.unit_id, item.old, item.new): item for item in raw_suggestions}
+            for item in accepted:
+                key = (item.unit_id, item.old, item.new)
+                raw_item = raw_by_key.get(key)
+                support = support_map.get(key, {})
+                hit_count = int(support.get("hit_count", 0))
+                if raw_item is None:
+                    # This should never happen, but fail closed in a precision-first export gate.
+                    reason = "multipass_supportdata_saknas"
+                    required_hits = required_consensus_hits(item.error_type)
+                else:
+                    reason = consensus_rejection_reason(raw_item, hit_count)
+                    required_hits = required_consensus_hits(raw_item.error_type)
+
+                if reason is None:
+                    kept.append(item)
+                    continue
+
+                consensus_rejected += 1
+                rejected.append({
+                    "suggestion": {
+                        "unit_id": item.unit_id,
+                        "old": item.old,
+                        "new": item.new,
+                        "error_type": item.error_type,
+                        "motivation": item.motivation,
+                        "confidence": item.confidence,
+                    },
+                    "reasons": [reason],
+                    "consensus": {
+                        "hit_count": hit_count,
+                        "required_hits": required_hits,
+                        "run_numbers": support.get("run_numbers", []),
+                    },
+                })
+            accepted = kept
+
         print(
-            f"{prefix} Validering klar: {len(accepted)} godkända, {len(rejected)} avvisade.",
+            f"{prefix} Validering klar: {len(accepted)} godkända, {len(rejected)} avvisade"
+            + (f" ({consensus_rejected} avvisade av multipass-konsensus)." if not mock else "."),
             flush=True,
         )
 
@@ -116,6 +166,7 @@ class ProofreadingService:
             "raw_suggestion_count": len(raw_suggestions),
             "accepted_suggestion_count": len(accepted),
             "rejected_suggestion_count": len(rejected),
+            "consensus_rejected_suggestion_count": consensus_rejected,
             "model": "mock" if mock else model,
             "extraction_seconds": round(extraction_elapsed, 3),
             "review_seconds": round(review_elapsed, 3),
