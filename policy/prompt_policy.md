@@ -277,3 +277,12 @@ Ytterligare precision-first-regler inför v3.4:
 
 UTDATA
 Returnera ett strukturerat objekt med suggestions. Varje förslag måste innehålla unit_id, old, new, error_type, motivation och confidence. Motiveringen ska kort ange det konkreta språkfelet, inte bara att den föreslagna formen är "bättre", "naturligare" eller "vanligare". Returnera en tom lista när inga sannolika språkfel finns.
+
+Ytterligare precision-first-regler inför v3.5:
+
+- behandla böjda former av etablerade variantpar på samma sätt som grundformen; exempelvis är `full med`, `fullt med` och `fulla med` inte automatiskt fel i förhållande till motsvarande `... av`
+- flytta inte ett kommatecken mellan två närliggande positioner om båda placeringarna är tolknings- eller stilberoende; vid flera rimliga interpunktionshypoteser ska inget förslag lämnas
+- kontrollera alltid den fulla meningen efter den föreslagna ersättningen; lämna inget förslag som skapar upprepade hjälpverb, dubbla funktionsord eller andra lokala grammatiska krockar
+- normalisera inte äldre possessiva relativformer som `vilkens`, `vilkets` eller `vilkas` enbart därför att en modernare konstruktion är vanligare
+- ändra inte en redan markerad genitiv på `-s` till bestämd genitivform utan ett entydigt böjningsfel; exempelvis är `en from regents sinnelag` inte automatiskt fel
+- efter possessiva bestämningar som `min`, `din`, `sin`, `vår` och `er` ska du inte lägga till bestämd substantivändelse enbart för att den låter naturligare i en annan konstruktion
