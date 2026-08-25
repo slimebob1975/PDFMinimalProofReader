@@ -290,3 +290,83 @@ def test_keeps_clear_vocative_and_att_comma_corrections_available():
         )
         accepted, rejected = SuggestionValidator().validate([suggestion], [_variant_unit(text)])
         assert len(accepted) == 1, (old, new, rejected)
+
+
+
+def test_rejects_inflected_full_med_full_av_variants():
+    cases = [
+        ("Husen var fulla med folk.", "fulla med", "fulla av"),
+        ("Kärlet var fullt med vatten.", "fullt med", "fullt av"),
+    ]
+    for text, old, new in cases:
+        suggestion = ModelSuggestion(
+            unit_id="unit_00001", old=old, new=new,
+            error_type="grammatik", motivation="Normering.", confidence="hög"
+        )
+        accepted, rejected = SuggestionValidator().validate([suggestion], [_variant_unit(text)])
+        assert not accepted, (old, new, rejected)
+        assert rejected[0]["reasons"] == ["grammatiskt_möjlig_variant_skyddas"]
+
+
+def test_nearby_punctuation_insertions_are_treated_as_competing_hypotheses():
+    text = "Han teg för då visste han svaret."
+    suggestions = [
+        ModelSuggestion(
+            unit_id="unit_00001", old="för då", new="för, då",
+            error_type="kommatering", motivation="Komma krävs.", confidence="hög"
+        ),
+        ModelSuggestion(
+            unit_id="unit_00001", old="för då", new="för då,",
+            error_type="kommatering", motivation="Komma krävs.", confidence="hög"
+        ),
+    ]
+    accepted, rejected = SuggestionValidator().validate(suggestions, [_variant_unit(text)])
+    assert not accepted
+    assert sum(
+        "konkurrerande_korrigeringshypoteser_samma_felställe" in item["reasons"]
+        for item in rejected
+    ) == 2
+
+
+def test_rejects_replacement_that_creates_duplicate_auxiliary_in_context():
+    text = "När tiden kommer, då ska det ord fullbordas."
+    suggestion = ModelSuggestion(
+        unit_id="unit_00001", old="det ord fullbordas", new="det ska fullbordas",
+        error_type="grammatik", motivation="Hjälpverb saknas.", confidence="hög"
+    )
+    accepted, rejected = SuggestionValidator().validate([suggestion], [_variant_unit(text)])
+    assert not accepted
+    assert rejected[0]["reasons"] == ["ersättning_skapar_lokal_grammatikkrock"]
+
+
+def test_rejects_historical_possessive_relative_normalization():
+    text = "Mannen vilkens namn var känt kom in."
+    suggestion = ModelSuggestion(
+        unit_id="unit_00001", old="vilkens", new="vilket",
+        error_type="grammatik", motivation="Modern relativform.", confidence="hög"
+    )
+    accepted, rejected = SuggestionValidator().validate([suggestion], [_variant_unit(text)])
+    assert not accepted
+    assert rejected[0]["reasons"] == ["historisk_possessiv_relativform_skyddas"]
+
+
+def test_rejects_existing_genitive_expanded_to_definite_genitive():
+    text = "Det var en from regents sinnelag."
+    suggestion = ModelSuggestion(
+        unit_id="unit_00001", old="regents", new="regentens",
+        error_type="böjning_kongruens", motivation="Bestämd genitiv krävs.", confidence="hög"
+    )
+    accepted, rejected = SuggestionValidator().validate([suggestion], [_variant_unit(text)])
+    assert not accepted
+    assert rejected[0]["reasons"] == ["befintlig_genitivform_skyddas"]
+
+
+def test_rejects_definite_suffix_added_after_possessive():
+    text = "Han lämnade din lägel."
+    suggestion = ModelSuggestion(
+        unit_id="unit_00001", old="lägel", new="lägeln",
+        error_type="böjning_kongruens", motivation="Bestämd form krävs.", confidence="hög"
+    )
+    accepted, rejected = SuggestionValidator().validate([suggestion], [_variant_unit(text)])
+    assert not accepted
+    assert rejected[0]["reasons"] == ["possessiv_med_obestämd_substantivform_skyddas"]
