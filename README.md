@@ -288,3 +288,8 @@ Skyddet för accepterade skriv- och stilvarianter fungerar nu även när variant
 ## Multipass v3.4 – precisionstätning
 
 V3.4 lämnar multipass- och konsensusnivåerna oförändrade och tätar endast de återstående precisionsläckorna från den stora v3.3-batchen. Referens- och notapparat skyddas absolut, även för numeriska referensfragment och ändringar precis före en hänvisning. Valfria diskurs-/konjunktionskomman skyddas. Ett litet antal grammatiskt möjliga normaliseringar (bl.a. `full med/full av`, `även fast/även om`, `kommer + infinitiv/kommer att + infinitiv`) behandlas som varianter. Genitivliknande sammansättningar skyddas mot automatisk hopskrivning/bindestreckning, och lokala ersättningar som skulle skapa en prepositionskrock i full kontext avvisas.
+
+
+## Multipass v3.5 – sista precisionpatchen
+
+V3.5 lämnar multipass, mättnad och konsensusgrind helt oförändrade. Ändringarna ligger i precision efter modellsvaret: böjda `full med/full av`-varianter skyddas, närliggande alternativa interpunktionsinsättningar behandlas som konkurrerande hypoteser, och en fullkontextkontroll stoppar ersättningar som skapar lokala funktionsordskrockar (t.ex. dubbla hjälpverb). Dessutom skyddas ett fåtal äldre/genitiva konstruktioner som verifierats som falska positiva i v3.4-batchen, bland annat `vilkens` och redan markerad genitiv på `-s`. Diagnostikens versionsmarkör är `3.5`.
