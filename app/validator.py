@@ -518,6 +518,8 @@ def _normalizes_possible_standard_variant(old: str, new: str) -> bool:
     new_norm = re.sub(r"\s+", " ", new.strip().casefold())
     protected_pairs = {
         frozenset({"full med", "full av"}),
+        frozenset({"fullt med", "fullt av"}),
+        frozenset({"fulla med", "fulla av"}),
         frozenset({"även fast", "även om"}),
         frozenset({"församlade", "samlade"}),
         frozenset({"i famn", "i sin famn"}),
@@ -553,6 +555,110 @@ def _changes_genitive_compound_spacing(old: str, new: str) -> bool:
     joined = m.group(1) + m.group(2)
     hyphen = m.group(1) + "-" + m.group(2)
     return new_norm in {joined, hyphen}
+
+
+def _changes_historical_possessive_relative(old: str, new: str) -> bool:
+    """Protect older possessive relative forms such as ``vilkens``.
+
+    These forms are uncommon in modern prose but can be grammatical in older
+    religious/literary text. A minimal proofreader must not normalize them
+    merely because a modern relative form is more frequent.
+    """
+    old_words = [word.casefold() for word in WORD_RE.findall(old)]
+    new_words = [word.casefold() for word in WORD_RE.findall(new)]
+    protected = {"vilkens", "vilkets", "vilkas"}
+    if not (set(old_words) & protected or set(new_words) & protected):
+        return False
+    return old_words != new_words
+
+
+def _changes_existing_genitive_to_definite_form(old: str, new: str) -> bool:
+    """Protect an existing ``-s`` genitive from expansion to a definite form.
+
+    Example: ``regents`` -> ``regentens``. The source already carries genitive
+    ``-s``; adding definite morphology is not an indisputable correction.
+    """
+    old_words = [word.casefold() for word in WORD_RE.findall(old)]
+    new_words = [word.casefold() for word in WORD_RE.findall(new)]
+    if len(old_words) != len(new_words) or not old_words:
+        return False
+    diffs = [(a, b) for a, b in zip(old_words, new_words) if a != b]
+    if len(diffs) != 1:
+        return False
+    a, b = diffs[0]
+    if len(a) < 4 or not a.endswith("s"):
+        return False
+    stem = a[:-1]
+    return b in {stem + "ens", stem + "ets", stem + "ns", stem + "ts"}
+
+
+def _adds_definite_suffix_after_possessive(context: str, old: str, new: str) -> bool:
+    """Protect noun definiteness after possessives, also when possessive lies outside ``old``."""
+    possessives = {
+        "min", "mitt", "mina", "din", "ditt", "dina",
+        "vår", "vårt", "våra", "er", "ert", "era",
+        "sin", "sitt", "sina", "hans", "hennes", "dess", "deras",
+    }
+    old_words = [word.casefold() for word in WORD_RE.findall(old)]
+    new_words = [word.casefold() for word in WORD_RE.findall(new)]
+    if len(old_words) != len(new_words) or not old_words:
+        return False
+
+    # Either the possessive is part of the replacement span...
+    noun_start = 0
+    if len(old_words) >= 2 and old_words[0] in possessives and new_words[0] == old_words[0]:
+        noun_start = 1
+    else:
+        # ...or it immediately precedes the uniquely anchored source span.
+        start = context.find(old)
+        if start < 0 or context.find(old, start + 1) >= 0:
+            return False
+        before_words = WORD_RE.findall(context[:start])
+        if not before_words or before_words[-1].casefold() not in possessives:
+            return False
+
+    diffs = [(a, b) for a, b in zip(old_words[noun_start:], new_words[noun_start:]) if a != b]
+    if len(diffs) != 1:
+        return False
+    a, b = diffs[0]
+    if len(a) < 2 or not b.startswith(a):
+        return False
+    suffix = b[len(a):]
+    return suffix in {"n", "en", "et"}
+
+
+def _replacement_creates_local_function_word_collision(context: str, old: str, new: str) -> bool:
+    """Reject replacements that create an obvious local grammar collision.
+
+    This is a post-replacement sanity check, not a language model. It only fires
+    when the proposed replacement creates a collision pattern that did not exist
+    in the original local window, such as ``ska det ska`` or two adjacent
+    prepositions/articles.
+    """
+    if not old:
+        return False
+    start = context.find(old)
+    if start < 0 or context.find(old, start + 1) >= 0:
+        return False
+    before = context[max(0, start - 80): start]
+    after = context[start + len(old): min(len(context), start + len(old) + 80)]
+    original_window = before + old + after
+    replaced_window = before + new + after
+
+    aux = r"(?:är|var|vara|blir|blev|bli|har|hade|ha|kan|kunde|ska|skulle|må|måste|vill|ville|bör|borde|får|fick|kommer|kom)"
+    pron_or_det = r"(?:jag|du|han|hon|den|det|vi|ni|de|man|en|ett|min|mitt|din|ditt|sin|sitt|vår|vårt|er|ert)"
+    prep = r"(?:av|bakom|bland|efter|enligt|för|från|före|genom|hos|i|inom|intill|kring|med|mellan|mot|om|på|till|under|ur|utan|vid|över)"
+    article = r"(?:en|ett|den|det|de)"
+
+    patterns = [
+        re.compile(rf"\b({aux})\b(?:\s+{pron_or_det}){{0,2}}\s+\1\b", re.IGNORECASE),
+        re.compile(rf"\b({prep})\b\s+\1\b", re.IGNORECASE),
+        re.compile(rf"\b({article})\b\s+\1\b", re.IGNORECASE),
+    ]
+    for pattern in patterns:
+        if len(pattern.findall(replaced_window)) > len(pattern.findall(original_window)):
+            return True
+    return False
 
 
 def _adds_preposition_before_existing_preposition(context: str, old: str, new: str) -> bool:
@@ -640,7 +746,11 @@ def _accepted_span(item: ValidatedSuggestion, unit: TextUnit) -> tuple[int, int]
 def _spans_conflict(a: tuple[int, int], b: tuple[int, int]) -> bool:
     a_start, a_end = a
     b_start, b_end = b
-    tolerance = 2 if a_start == a_end or b_start == b_end else 0
+    # Nearby punctuation insertions are often competing hypotheses about the
+    # same local construction (for example comma before vs. after a short word
+    # group). Treat insertion points within four characters as one disputed
+    # locus rather than exporting both alternatives.
+    tolerance = 4 if a_start == a_end or b_start == b_end else 0
     return a_start <= b_end + tolerance and b_start <= a_end + tolerance
 
 
@@ -710,6 +820,10 @@ class SuggestionValidator:
                 reasons.append("valfri_interpunktion_skyddas")
             elif _adds_optional_comma_after_initial_phrase(unit.text, suggestion.old, suggestion.new):
                 reasons.append("valfri_kommatering_efter_inledande_adverbial_skyddas")
+            elif _changes_historical_possessive_relative(suggestion.old, suggestion.new):
+                reasons.append("historisk_possessiv_relativform_skyddas")
+            elif _adds_definite_suffix_after_possessive(unit.text, suggestion.old, suggestion.new):
+                reasons.append("possessiv_med_obestämd_substantivform_skyddas")
             elif _changes_capitalized_word(suggestion.old, suggestion.new):
                 reasons.append("egennamn_eller_titel_skyddas")
             elif _changes_apostrophe_genitive(suggestion.old, suggestion.new):
@@ -718,6 +832,8 @@ class SuggestionValidator:
                 reasons.append("möjlig_genitivkedja_skyddas")
             elif _changes_genitive_compound_spacing(suggestion.old, suggestion.new):
                 reasons.append("möjlig_genitivsammansättning_skyddas")
+            elif _changes_existing_genitive_to_definite_form(suggestion.old, suggestion.new):
+                reasons.append("befintlig_genitivform_skyddas")
             elif _changes_terminal_s_morphology(suggestion.old, suggestion.new):
                 reasons.append("möjlig_genitivform_skyddas")
             elif _changes_negation(suggestion.old, suggestion.new):
@@ -734,6 +850,8 @@ class SuggestionValidator:
                 reasons.append("lexikal_förenkling_skyddas")
             elif _adds_auxiliary_to_possible_ellipsis(unit.text, suggestion):
                 reasons.append("möjlig_elliptisk_konstruktion_skyddas")
+            elif _replacement_creates_local_function_word_collision(unit.text, suggestion.old, suggestion.new):
+                reasons.append("ersättning_skapar_lokal_grammatikkrock")
             elif _adds_preposition_before_existing_preposition(unit.text, suggestion.old, suggestion.new):
                 reasons.append("ersättning_skapar_prepositionskrock")
             elif _removes_sentence_linker(suggestion.old, suggestion.new):
