@@ -661,6 +661,67 @@ def _replacement_creates_local_function_word_collision(context: str, old: str, n
     return False
 
 
+def _replacement_duplicates_boundary_material(context: str, old: str, new: str) -> bool:
+    """Reject replacements that duplicate material already outside the source span.
+
+    This is a deliberately mechanical post-replacement guard. It catches cases
+    where the model expands ``old`` with a word or punctuation mark that is
+    already immediately adjacent in the untouched context, e.g.
+    ``för mig`` -> ``för mig ut`` inside ``för mig ut ur min nöd``.
+    """
+    if not old:
+        return False
+    start = context.find(old)
+    if start < 0 or context.find(old, start + 1) >= 0:
+        return False
+    end = start + len(old)
+    before = context[:start]
+    after = context[end:]
+
+    def edge_word_left(value: str) -> str | None:
+        words = WORD_RE.findall(value)
+        return words[-1].casefold() if words else None
+
+    def edge_word_right(value: str) -> str | None:
+        match = WORD_RE.search(value)
+        return match.group(0).casefold() if match else None
+
+    # Right boundary: new ends with the same word that already begins the
+    # untouched suffix. Only reject when this duplication did not already exist
+    # at the original old/after boundary.
+    new_last = edge_word_left(new)
+    after_first = edge_word_right(after.lstrip())
+    old_last = edge_word_left(old)
+    if new_last and after_first and new_last == after_first and old_last != after_first:
+        return True
+
+    # Left boundary counterpart.
+    new_first = edge_word_right(new.lstrip())
+    before_last = edge_word_left(before.rstrip())
+    old_first = edge_word_right(old.lstrip())
+    if new_first and before_last and new_first == before_last and old_first != before_last:
+        return True
+
+    # Identical punctuation duplicated directly across either replacement
+    # boundary. Whitespace between the two marks is ignored.
+    punct = set('.,;:!?…')
+    new_r = new.rstrip()
+    after_l = after.lstrip()
+    old_r = old.rstrip()
+    if new_r and after_l and new_r[-1] in punct and new_r[-1] == after_l[0]:
+        if not (old_r and old_r[-1] == after_l[0]):
+            return True
+
+    new_l = new.lstrip()
+    before_r = before.rstrip()
+    old_l = old.lstrip()
+    if new_l and before_r and new_l[0] in punct and new_l[0] == before_r[-1]:
+        if not (old_l and old_l[0] == before_r[-1]):
+            return True
+
+    return False
+
+
 def _adds_preposition_before_existing_preposition(context: str, old: str, new: str) -> bool:
     """Reject local replacements that create stacked prepositions in full context."""
     if not old or old not in context:
@@ -850,6 +911,8 @@ class SuggestionValidator:
                 reasons.append("lexikal_förenkling_skyddas")
             elif _adds_auxiliary_to_possible_ellipsis(unit.text, suggestion):
                 reasons.append("möjlig_elliptisk_konstruktion_skyddas")
+            elif _replacement_duplicates_boundary_material(unit.text, suggestion.old, suggestion.new):
+                reasons.append("ersättning_dubblerar_angränsande_material")
             elif _replacement_creates_local_function_word_collision(unit.text, suggestion.old, suggestion.new):
                 reasons.append("ersättning_skapar_lokal_grammatikkrock")
             elif _adds_preposition_before_existing_preposition(unit.text, suggestion.old, suggestion.new):

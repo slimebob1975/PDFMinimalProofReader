@@ -11,7 +11,7 @@ from .models import ModelSuggestion, SuggestionEnvelope, TextUnit
 from .validator import SuggestionValidator
 
 
-MULTIPASS_VERSION = "3.5"
+MULTIPASS_VERSION = "3.5.1"
 MIN_MULTIPASS_RUNS = 5
 
 CONSENSUS_MIN_HITS = {
