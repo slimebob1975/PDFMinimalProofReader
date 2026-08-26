@@ -403,3 +403,101 @@ def test_boundary_duplicate_guard_does_not_block_legitimate_expansion():
     accepted, rejected = SuggestionValidator().validate([suggestion], [_variant_unit(text)])
     assert len(accepted) == 1
     assert not rejected
+
+
+def _support(old: str, new: str, hits: int = 5) -> dict:
+    return {("unit_00001", old, new): {"hit_count": hits, "run_numbers": list(range(1, hits + 1))}}
+
+
+def _custom_unit(text: str) -> TextUnit:
+    return TextUnit("unit_00001", "Test", 1, 1, False, "Test 1:1", 1, 1, None, "vänster", 1, 1, text, [text])
+
+
+def test_high_consensus_override_allows_mechanical_name_segmentation():
+    cases = [
+        ("I srael växte.", "I srael", "Israel", "stavning"),
+        ("Ifullt mått.", "Ifullt", "I fullt", "stavning"),
+    ]
+    for text, old, new, error_type in cases:
+        s = ModelSuggestion(
+            unit_id="unit_00001", old=old, new=new, error_type=error_type,
+            motivation="Tydligt mekaniskt fel.", confidence="hög"
+        )
+        accepted, rejected = SuggestionValidator().validate(
+            [s], [_custom_unit(text)], support_map=_support(old, new, 5)
+        )
+        assert len(accepted) == 1, (old, new, rejected)
+        assert not rejected
+
+
+def test_high_consensus_override_allows_name_genitive_s():
+    text = "De var av Levi stam."
+    old, new = "av Levi stam", "av Levis stam"
+    s = ModelSuggestion(
+        unit_id="unit_00001", old=old, new=new, error_type="grammatik",
+        motivation="Genitiv-s saknas.", confidence="hög"
+    )
+    accepted, rejected = SuggestionValidator().validate(
+        [s], [_custom_unit(text)], support_map=_support(old, new, 7)
+    )
+    assert len(accepted) == 1
+    assert not rejected
+
+
+def test_high_consensus_override_allows_local_pronoun_morphology_only():
+    cases = [
+        ("Era ord och er skatter är kända.", "er skatter", "era skatter", "böjning_kongruens"),
+        ("Han talade om i de som kom.", "i de som", "i dem som", "grammatik"),
+    ]
+    for text, old, new, error_type in cases:
+        s = ModelSuggestion(
+            unit_id="unit_00001", old=old, new=new, error_type=error_type,
+            motivation="Lokal böjning.", confidence="hög"
+        )
+        accepted, rejected = SuggestionValidator().validate(
+            [s], [_custom_unit(text)], support_map=_support(old, new, 6)
+        )
+        assert len(accepted) == 1, (old, new, rejected)
+        assert not rejected
+
+
+def test_high_consensus_override_does_not_allow_semantic_pronoun_change():
+    text = "Han tog hans bok."
+    old, new = "hans", "deras"
+    s = ModelSuggestion(
+        unit_id="unit_00001", old=old, new=new, error_type="grammatik",
+        motivation="Syftningen bör ändras.", confidence="hög"
+    )
+    accepted, rejected = SuggestionValidator().validate(
+        [s], [_custom_unit(text)], support_map=_support(old, new, 10)
+    )
+    assert not accepted
+    assert rejected[0]["reasons"] == ["pronomen_eller_syftning_skyddas"]
+
+
+def test_high_consensus_override_requires_five_hits():
+    text = "Ifullt mått."
+    old, new = "Ifullt", "I fullt"
+    s = ModelSuggestion(
+        unit_id="unit_00001", old=old, new=new, error_type="stavning",
+        motivation="Tydligt mekaniskt fel.", confidence="hög"
+    )
+    accepted, rejected = SuggestionValidator().validate(
+        [s], [_custom_unit(text)], support_map=_support(old, new, 4)
+    )
+    assert not accepted
+    assert rejected[0]["reasons"] == ["egennamn_eller_titel_skyddas"]
+
+
+def test_high_consensus_override_allows_exact_duplicate_heading_collapse():
+    text = "Salomos Ordspråk. Salomos Ordspråk."
+    old, new = text, "Salomos Ordspråk."
+    s = ModelSuggestion(
+        unit_id="unit_00001", old=old, new=new, error_type="dubblerat_saknat_ord",
+        motivation="Exakt dubblering.", confidence="hög"
+    )
+    accepted, rejected = SuggestionValidator().validate(
+        [s], [_custom_unit(text)], support_map=_support(old, new, 5)
+    )
+    assert len(accepted) == 1, rejected
+    assert not rejected
