@@ -293,3 +293,8 @@ V3.4 lämnar multipass- och konsensusnivåerna oförändrade och tätar endast d
 ## Multipass v3.5 – sista precisionpatchen
 
 V3.5 lämnar multipass, mättnad och konsensusgrind helt oförändrade. Ändringarna ligger i precision efter modellsvaret: böjda `full med/full av`-varianter skyddas, närliggande alternativa interpunktionsinsättningar behandlas som konkurrerande hypoteser, och en fullkontextkontroll stoppar ersättningar som skapar lokala funktionsordskrockar (t.ex. dubbla hjälpverb). Dessutom skyddas ett fåtal äldre/genitiva konstruktioner som verifierats som falska positiva i v3.4-batchen, bland annat `vilkens` och redan markerad genitiv på `-s`. Diagnostikens versionsmarkör är `3.5`.
+
+
+## Multipass v3.5.1 – slutlig mekanisk gränskontroll
+
+V3.5.1 ändrar inga språkregler, konsensusnivåer eller multipass-parametrar. Den lägger endast till en deterministisk post-replacement-kontroll som avvisar en ersättning om den dubblerar ord eller identisk interpunktion som redan ligger direkt utanför modellens `old`-span. Exempel: `för mig` → `för mig ut` avvisas i kontexten `för mig ut ur min nöd`, eftersom resultatet annars skulle bli `för mig ut ut ur min nöd`. Diagnostikens versionsmarkör är `3.5.1`.
