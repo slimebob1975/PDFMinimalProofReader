@@ -298,3 +298,7 @@ V3.5 lämnar multipass, mättnad och konsensusgrind helt oförändrade. Ändring
 ## Multipass v3.5.1 – slutlig mekanisk gränskontroll
 
 V3.5.1 ändrar inga språkregler, konsensusnivåer eller multipass-parametrar. Den lägger endast till en deterministisk post-replacement-kontroll som avvisar en ersättning om den dubblerar ord eller identisk interpunktion som redan ligger direkt utanför modellens `old`-span. Exempel: `för mig` → `för mig ut` avvisas i kontexten `för mig ut ur min nöd`, eftersom resultatet annars skulle bli `för mig ut ut ur min nöd`. Diagnostikens versionsmarkör är `3.5.1`.
+
+## Multipass v3.5.2 – smal recall-ventil
+
+V3.5.2 ändrar inte prompt, multipass, mättnad eller ordinarie konsensusgrind. Den slutliga validatorn får endast ett mycket smalt högkonsensus-undantag när ett annars skyddat förslag har `confidence=hög` och minst 5 multipass-träffar. Undantaget gäller bara mekaniska fall som ren ordsegmentering (`I srael` → `Israel`, `Ifullt` → `I fullt`), ett lokalt genitiv-`s` på ett versaliserat namn, lokalt avgörbar pronomenmorfologi (`er skatter` → `era skatter`, `i de som` → `i dem som`) samt exakt dubblerad fras som kollapsas till en kopia. Semantiska syftningsbyten som `hans` → `deras`, referenser/notapparat, stilval, låg/medel säkerhet och konkurrerande hypoteser kan inte använda undantaget.
