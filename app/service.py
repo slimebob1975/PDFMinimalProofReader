@@ -102,12 +102,14 @@ class ProofreadingService:
         review_elapsed = time.perf_counter() - review_started
 
         print(f"{prefix} Validerar {len(raw_suggestions)} råa förslag...", flush=True)
-        accepted, rejected = SuggestionValidator().validate(raw_suggestions, units)
+        support_map = {} if mock else getattr(reviewer, "last_support", {})
+        accepted, rejected = SuggestionValidator().validate(
+            raw_suggestions, units, support_map=support_map
+        )
 
         consensus_rejected = 0
         if not mock:
             kept = []
-            support_map = getattr(reviewer, "last_support", {})
             raw_by_key = {(item.unit_id, item.old, item.new): item for item in raw_suggestions}
             for item in accepted:
                 key = (item.unit_id, item.old, item.new)

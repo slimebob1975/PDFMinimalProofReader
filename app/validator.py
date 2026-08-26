@@ -815,13 +815,145 @@ def _spans_conflict(a: tuple[int, int], b: tuple[int, int]) -> bool:
     return a_start <= b_end + tolerance and b_start <= a_end + tolerance
 
 
+SAFE_OVERRIDE_MIN_HITS = 5
+SAFE_OVERRIDE_ERROR_TYPES = {
+    "stavning",
+    "böjning_kongruens",
+    "särskrivning_sammanskrivning",
+    "grammatik",
+    "preposition",
+    "dubblerat_saknat_ord",
+}
+
+
+def _only_resegments_whitespace(old: str, new: str) -> bool:
+    """Return True for a pure whitespace segmentation repair.
+
+    Examples: ``I srael`` -> ``Israel`` and ``Ifullt`` -> ``I fullt``.
+    Letter case, punctuation and digits must otherwise be identical.
+    """
+    if old == new:
+        return False
+    compact = lambda value: re.sub(r"\s+", "", value)
+    return compact(old) == compact(new) and re.sub(r"\s+", " ", old) != re.sub(r"\s+", " ", new)
+
+
+def _adds_terminal_s_to_capitalized_name(old: str, new: str) -> bool:
+    """Recognize a minimal genitive ``-s`` addition to one capitalized token."""
+    old_words = WORD_RE.findall(old)
+    new_words = WORD_RE.findall(new)
+    if len(old_words) != len(new_words) or not old_words:
+        return False
+    diffs = [(a, b) for a, b in zip(old_words, new_words) if a != b]
+    if len(diffs) != 1:
+        return False
+    a, b = diffs[0]
+    return bool(a[:1].isupper() and len(a) >= 2 and b == a + "s")
+
+
+def _changed_pronoun_pair(old: str, new: str) -> tuple[str, str] | None:
+    old_words = [word.casefold() for word in WORD_RE.findall(old)]
+    new_words = [word.casefold() for word in WORD_RE.findall(new)]
+    if len(old_words) != len(new_words) or not old_words:
+        return None
+    diffs = [(a, b) for a, b in zip(old_words, new_words) if a != b]
+    return diffs[0] if len(diffs) == 1 else None
+
+
+def _safe_local_pronoun_morphology(context: str, old: str, new: str) -> bool:
+    """Allow only pronoun morphology that can be decided from local syntax.
+
+    This deliberately excludes semantic-reference choices such as ``hans`` ->
+    ``deras``. The two admitted patterns are possessive agreement ``er`` ->
+    ``era`` before an unchanged following word, and ``de`` -> ``dem`` directly
+    after a preposition.
+    """
+    pair = _changed_pronoun_pair(old, new)
+    if pair is None:
+        return False
+    a, b = pair
+
+    old_words = [word.casefold() for word in WORD_RE.findall(old)]
+    new_words = [word.casefold() for word in WORD_RE.findall(new)]
+    if (a, b) == ("er", "era"):
+        diff_index = next(i for i, (x, y) in enumerate(zip(old_words, new_words)) if x != y)
+        if diff_index + 1 < len(old_words) and old_words[diff_index + 1] == new_words[diff_index + 1]:
+            return True
+        # The noun may lie immediately outside a one-word model span.
+        start = context.find(old)
+        if start >= 0 and context.find(old, start + 1) < 0:
+            after = context[start + len(old):]
+            return WORD_RE.search(after.lstrip()) is not None
+        return False
+
+    if (a, b) == ("de", "dem"):
+        start = context.find(old)
+        if start < 0 or context.find(old, start + 1) >= 0:
+            return False
+        # Find the changed token's start inside old, then inspect the preceding
+        # word in full context (which may lie inside or outside old).
+        for match in WORD_RE.finditer(old):
+            if match.group(0).casefold() == "de":
+                absolute = start + match.start()
+                before_words = WORD_RE.findall(context[:absolute])
+                return bool(before_words and before_words[-1].casefold() in PREPOSITIONS)
+    return False
+
+
+def _collapses_exact_duplicate_phrase(old: str, new: str) -> bool:
+    """Recognize X X -> X after whitespace normalization."""
+    old_norm = re.sub(r"\s+", " ", old.strip())
+    new_norm = re.sub(r"\s+", " ", new.strip())
+    return bool(new_norm and old_norm == f"{new_norm} {new_norm}")
+
+
+def _high_consensus_mechanical_override(
+    suggestion: ModelSuggestion,
+    unit: TextUnit,
+    reasons: list[str],
+    support_map: dict[tuple[str, str, str], dict] | None,
+) -> bool:
+    """Narrow recall valve through broad protection rules.
+
+    It is intentionally impossible to override reference/note guards, stylistic
+    guards, low confidence, ambiguity, or any candidate with more than one
+    rejection reason. Competing hypotheses are still removed by the normal
+    conflict pass after validation.
+    """
+    if len(reasons) != 1 or support_map is None:
+        return False
+    if suggestion.confidence.casefold() != "hög":
+        return False
+    if suggestion.error_type not in SAFE_OVERRIDE_ERROR_TYPES:
+        return False
+    support = support_map.get((suggestion.unit_id, suggestion.old, suggestion.new), {})
+    if int(support.get("hit_count", 0)) < SAFE_OVERRIDE_MIN_HITS:
+        return False
+
+    reason = reasons[0]
+    if reason == "egennamn_eller_titel_skyddas":
+        return (
+            _only_resegments_whitespace(suggestion.old, suggestion.new)
+            or _adds_terminal_s_to_capitalized_name(suggestion.old, suggestion.new)
+            or _collapses_exact_duplicate_phrase(suggestion.old, suggestion.new)
+        )
+    if reason == "pronomen_eller_syftning_skyddas":
+        return _safe_local_pronoun_morphology(unit.text, suggestion.old, suggestion.new)
+    if reason == "möjlig_avsiktlig_upprepning_skyddas":
+        return _collapses_exact_duplicate_phrase(suggestion.old, suggestion.new)
+    return False
+
+
 class SuggestionValidator:
     def __init__(self, max_replacement_chars: int = 220, max_change_ratio: float = 0.60):
         self.max_replacement_chars = max_replacement_chars
         self.max_change_ratio = max_change_ratio
 
     def validate(
-        self, suggestions: list[ModelSuggestion], units: list[TextUnit]
+        self,
+        suggestions: list[ModelSuggestion],
+        units: list[TextUnit],
+        support_map: dict[tuple[str, str, str], dict] | None = None,
     ) -> tuple[list[ValidatedSuggestion], list[dict]]:
         unit_map = {unit.unit_id: unit for unit in units}
         accepted: list[ValidatedSuggestion] = []
@@ -929,6 +1061,11 @@ class SuggestionValidator:
                 ratio = difflib.SequenceMatcher(None, suggestion.old, suggestion.new).ratio()
                 if ratio < self.max_change_ratio:
                     reasons.append("för_omfattande_eller_osäker_ändring")
+
+            if reasons and unit is not None and _high_consensus_mechanical_override(
+                suggestion, unit, reasons, support_map
+            ):
+                reasons.clear()
 
             key = (suggestion.unit_id, suggestion.old, suggestion.new)
             if key in seen:
