@@ -370,3 +370,36 @@ def test_rejects_definite_suffix_added_after_possessive():
     accepted, rejected = SuggestionValidator().validate([suggestion], [_variant_unit(text)])
     assert not accepted
     assert rejected[0]["reasons"] == ["possessiv_med_obestämd_substantivform_skyddas"]
+
+
+def test_rejects_replacement_that_duplicates_following_word_across_boundary():
+    text = "Herre, för mig ut ur min nöd!"
+    suggestion = ModelSuggestion(
+        unit_id="unit_00001", old="för mig", new="för mig ut",
+        error_type="dubblerat_saknat_ord", motivation="Ordet ut saknas.", confidence="hög"
+    )
+    accepted, rejected = SuggestionValidator().validate([suggestion], [_variant_unit(text)])
+    assert not accepted
+    assert rejected[0]["reasons"] == ["ersättning_dubblerar_angränsande_material"]
+
+
+def test_rejects_replacement_that_duplicates_preceding_word_across_boundary():
+    text = "han är god och trofast."
+    suggestion = ModelSuggestion(
+        unit_id="unit_00001", old="är god", new="han är god",
+        error_type="dubblerat_saknat_ord", motivation="Subjekt saknas.", confidence="hög"
+    )
+    accepted, rejected = SuggestionValidator().validate([suggestion], [_variant_unit(text)])
+    assert not accepted
+    assert rejected[0]["reasons"] == ["ersättning_dubblerar_angränsande_material"]
+
+
+def test_boundary_duplicate_guard_does_not_block_legitimate_expansion():
+    text = "Han bad för mig i nöden."
+    suggestion = ModelSuggestion(
+        unit_id="unit_00001", old="bad för mig", new="bad innerligt för mig",
+        error_type="dubblerat_saknat_ord", motivation="Ett ord saknas.", confidence="hög"
+    )
+    accepted, rejected = SuggestionValidator().validate([suggestion], [_variant_unit(text)])
+    assert len(accepted) == 1
+    assert not rejected

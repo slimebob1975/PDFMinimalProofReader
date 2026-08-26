@@ -237,7 +237,7 @@ def test_hybrid_saturation_does_not_start_before_five_runs():
     runs = reviewer.last_diagnostics["batches"][0]["runs"]
     assert len(runs) == 6
     assert reviewer.last_diagnostics["min_runs"] == 5
-    assert reviewer.last_diagnostics["version"] == "3.5"
+    assert reviewer.last_diagnostics["version"] == "3.5.1"
 
 
 def test_consensus_gate_requires_high_confidence_and_type_specific_hits():
