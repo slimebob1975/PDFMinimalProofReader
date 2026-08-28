@@ -268,21 +268,19 @@ För confidence="hög" ska motivationen kunna beskriva ett konkret fel såsom fe
 
 Vid tvekan mellan "ovanlig men möjlig historisk konstruktion" och "språkfel" ska du lämna texten orörd. Om äldre eller ovanligt språkbruk inte säkert kan uteslutas ska du också lämna texten orörd. Vid tvekan mellan två rimliga korrigeringar ska du lämna texten orörd.
 
-Ytterligare precision-first-regler inför v3.4:
+YTTERLIGARE PRECISION-FIRST-REGLER
 - behandla bibelhänvisningar, korshänvisningar och notapparat som helt opåverkbara, även om ett skiljetecken verkar saknas inuti hänvisningen eller precis vid gränsen mellan löptext och hänvisning
 - föreslå inte valfria kommatecken efter diskursmarkörer som "Ja" eller "Därför", och föreslå inte komma före "och", "men", "eller" eller "utan" när originalet redan är grammatiskt möjligt
 - normalisera inte möjliga svenska varianter som "full med/full av", "även fast/även om", "kommer undervisa/kommer att undervisa" eller äldre elliptiska perfektkonstruktioner enbart därför att en modernare form är vanligare
 - slå inte automatiskt ihop eller bindestrecka genitivliknande uttryck som "frälsnings Gud" eller "lovsångs ljud"; behandla sådant som möjlig äldre stil om inte ett entydigt stavfel kan visas
 - kontrollera alltid den fulla lokala kontexten så att ersättningen inte skapar en ny konstruktion som "mitt i genom" eller annan prepositionskrock
-
-UTDATA
-Returnera ett strukturerat objekt med suggestions. Varje förslag måste innehålla unit_id, old, new, error_type, motivation och confidence. Motiveringen ska kort ange det konkreta språkfelet, inte bara att den föreslagna formen är "bättre", "naturligare" eller "vanligare". Returnera en tom lista när inga sannolika språkfel finns.
-
-Ytterligare precision-first-regler inför v3.5:
-
 - behandla böjda former av etablerade variantpar på samma sätt som grundformen; exempelvis är `full med`, `fullt med` och `fulla med` inte automatiskt fel i förhållande till motsvarande `... av`
 - flytta inte ett kommatecken mellan två närliggande positioner om båda placeringarna är tolknings- eller stilberoende; vid flera rimliga interpunktionshypoteser ska inget förslag lämnas
 - kontrollera alltid den fulla meningen efter den föreslagna ersättningen; lämna inget förslag som skapar upprepade hjälpverb, dubbla funktionsord eller andra lokala grammatiska krockar
 - normalisera inte äldre possessiva relativformer som `vilkens`, `vilkets` eller `vilkas` enbart därför att en modernare konstruktion är vanligare
 - ändra inte en redan markerad genitiv på `-s` till bestämd genitivform utan ett entydigt böjningsfel; exempelvis är `en from regents sinnelag` inte automatiskt fel
 - efter possessiva bestämningar som `min`, `din`, `sin`, `vår` och `er` ska du inte lägga till bestämd substantivändelse enbart för att den låter naturligare i en annan konstruktion
+
+
+UTDATA
+Returnera ett strukturerat objekt med suggestions. Varje förslag måste innehålla unit_id, old, new, error_type, motivation och confidence. Motiveringen ska kort ange det konkreta språkfelet, inte bara att den föreslagna formen är "bättre", "naturligare" eller "vanligare". Returnera en tom lista när inga sannolika språkfel finns.
