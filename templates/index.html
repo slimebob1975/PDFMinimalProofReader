@@ -3,17 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PDF-korrektur</title>
+  <title>PDF/TXT-korrektur</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <main class="card" id="app-card">
-    <h1>PDF-korrektur</h1>
-    <p>Ladda upp en eller flera textbaserade PDF-filer. Tjänsten läser två spalter, identifierar kapitel och verser och skapar Excel-underlag med minimala språkförslag.</p>
+    <h1>PDF/TXT-korrektur</h1>
+    <p>Ladda upp en eller flera PDF- och/eller TXT-filer. PDF-filer extraheras med befintlig tvåspaltslogik. TXT-filer ska använda formatet "Kapitel: N" följt av versrader som "1. Text". Därefter används samma korrekturpipeline för båda formaten.</p>
 
     <form id="review-form" action="/review" method="post" enctype="multipart/form-data">
-      <label>PDF-fil(er)
-        <input type="file" name="files" accept="application/pdf,.pdf" multiple required>
+      <label>PDF- och TXT-fil(er)
+        <input type="file" name="files" accept="application/pdf,text/plain,.pdf,.txt" multiple required>
       </label>
 
       <label>OpenAI API-nyckel
@@ -43,7 +43,7 @@
 
     <div id="error-message" class="error-message" role="alert" hidden></div>
 
-    <p class="note">Skannade filer/OCR stöds inte. Högst {{ max_batch_files }} PDF-filer per körning och maximalt {{ max_upload_mb }} MB per fil. Vid flera PDF-filer skapas en gemensam Excel-fil med en flik per dokument. API-nyckeln används endast för den aktuella begäran.</p>
+    <p class="note">Skannade PDF-filer/OCR stöds inte. Högst {{ max_batch_files }} filer per körning och maximalt {{ max_upload_mb }} MB per fil. PDF och TXT kan blandas fritt. Vid flera filer skapas en gemensam Excel-fil med en flik per dokument. API-nyckeln används endast för den aktuella begäran.</p>
   </main>
 
   <script>
