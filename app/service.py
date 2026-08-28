@@ -11,6 +11,7 @@ from uuid import uuid4
 from .config import settings
 from .excel_exporter import export_batch_workbook, export_workbook
 from .pdf_extractor import build_units, detect_document_name, extract_lines
+from .text_extractor import extract_text_units
 from .reviewer import (
     MULTIPASS_VERSION,
     MockReviewer,
@@ -42,7 +43,7 @@ class ProofreadingService:
     def _process_document(
         self,
         *,
-        pdf_path: Path,
+        source_path: Path,
         original_filename: str,
         api_key: str | None,
         model: str,
@@ -54,22 +55,36 @@ class ProofreadingService:
         started_total = time.perf_counter()
         run_dir.mkdir(parents=True, exist_ok=True)
 
-        stored_pdf_path = run_dir / Path(original_filename).name
-        shutil.copy2(pdf_path, stored_pdf_path)
+        stored_source_path = run_dir / Path(original_filename).name
+        shutil.copy2(source_path, stored_source_path)
 
-        print(f"{prefix} Uppladdad PDF sparad: {stored_pdf_path.resolve()}", flush=True)
-        print(f"{prefix} Extraherar PDF-text...", flush=True)
+        suffix = stored_source_path.suffix.lower()
+        print(f"{prefix} Uppladdad fil sparad: {stored_source_path.resolve()}", flush=True)
         extraction_started = time.perf_counter()
-        lines, diagnostics = extract_lines(stored_pdf_path, max_pages=settings.max_pages)
-        document = detect_document_name(lines, stored_pdf_path)
-        units = build_units(lines, document=document)
+
+        if suffix == ".pdf":
+            print(f"{prefix} Extraherar PDF-text...", flush=True)
+            lines, diagnostics = extract_lines(stored_source_path, max_pages=settings.max_pages)
+            document = detect_document_name(lines, stored_source_path)
+            units = build_units(lines, document=document)
+            extraction_records = [asdict(x) for x in lines]
+            extraction_label = f"{len(lines)} PDF-rader"
+        elif suffix == ".txt":
+            print(f"{prefix} Extraherar TXT-text...", flush=True)
+            units, diagnostics = extract_text_units(stored_source_path)
+            document = units[0].document if units else stored_source_path.stem
+            extraction_records = []
+            extraction_label = f"{diagnostics.get('line_count', 0)} textrader"
+        else:
+            raise ValueError(f"Filtypen {suffix or '(saknas)'} stöds inte.")
+
         extraction_elapsed = time.perf_counter() - extraction_started
         if not units:
             raise ValueError("Ingen granskningsbar textstruktur kunde identifieras.")
 
         print(
             f"{prefix} Extraktion klar på {extraction_elapsed:.1f} s: "
-            f"{len(lines)} PDF-rader, {len(units)} textenheter, dokument={document}.",
+            f"{extraction_label}, {len(units)} textenheter, dokument={document}.",
             flush=True,
         )
 
@@ -158,7 +173,8 @@ class ProofreadingService:
             "run_id": run_id,
             "run_directory": str(run_dir.resolve()),
             "source_filename": original_filename,
-            "stored_pdf": str(stored_pdf_path.resolve()),
+            "stored_source": str(stored_source_path.resolve()),
+            "source_type": suffix.lstrip("."),
             "document": document,
             "unit_count": len(units),
             "estimated_gpt_calls_min": estimated_calls_min,
@@ -183,7 +199,7 @@ class ProofreadingService:
             json.dumps(
                 {
                     "diagnostics": diagnostics,
-                    "lines": [asdict(x) for x in lines],
+                    "lines": extraction_records,
                     "units": [asdict(x) for x in units],
                 },
                 ensure_ascii=False,
@@ -217,13 +233,13 @@ class ProofreadingService:
 
     def process(
         self,
-        pdf_path: Path,
+        source_path: Path,
         original_filename: str,
         api_key: str | None,
         model: str,
         mock: bool = False,
     ) -> tuple[Path, dict]:
-        """Preserve the existing single-PDF behavior."""
+        """Process one supported source document (PDF or TXT)."""
         run_id = self._new_run_id()
         run_dir = self.uploads_dir / run_id
         prefix = f"[{run_id}]"
@@ -234,7 +250,7 @@ class ProofreadingService:
         print(f"{prefix} Modell: {'mock' if mock else model}", flush=True)
 
         result = self._process_document(
-            pdf_path=pdf_path,
+            source_path=source_path,
             original_filename=original_filename,
             api_key=api_key,
             model=model,
@@ -264,7 +280,7 @@ class ProofreadingService:
         model: str,
         mock: bool = False,
     ) -> tuple[Path, dict]:
-        """Process several PDFs sequentially and return one workbook."""
+        """Process several PDF/TXT documents sequentially and return one workbook."""
         started_batch = time.perf_counter()
         run_id = self._new_run_id()
         run_dir = self.uploads_dir / run_id
@@ -282,7 +298,7 @@ class ProofreadingService:
         results: list[dict] = []
         total_documents = len(documents)
 
-        for index, (pdf_path, original_filename) in enumerate(documents, start=1):
+        for index, (source_path, original_filename) in enumerate(documents, start=1):
             document_prefix = f"{prefix} [Dokument {index}/{total_documents}]"
             document_dir = run_dir / self._safe_directory_name(original_filename, index)
             document_run_id = f"{run_id}_{index:02d}"
@@ -291,7 +307,7 @@ class ProofreadingService:
             print(f"{document_prefix} Startar: {original_filename}", flush=True)
             try:
                 result = self._process_document(
-                    pdf_path=pdf_path,
+                    source_path=source_path,
                     original_filename=original_filename,
                     api_key=api_key,
                     model=model,
@@ -329,7 +345,7 @@ class ProofreadingService:
             "total_seconds": round(batch_elapsed, 3),
         }
 
-        output_path = run_dir / f"pdf_korrektur_{run_id}.xlsx"
+        output_path = run_dir / f"korrektur_{run_id}.xlsx"
         print("", flush=True)
         print(f"{prefix} Skapar gemensam Excel-fil...", flush=True)
         export_batch_workbook(output_path, results, batch_diagnostics)

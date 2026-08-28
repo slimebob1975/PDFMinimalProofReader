@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 
 from .config import AVAILABLE_MODELS, settings
 from .pdf_extractor import PdfExtractionError
+from .text_extractor import TextExtractionError
 from .service import ProofreadingService
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -42,8 +43,8 @@ def health():
 
 def _store_upload(upload: UploadFile, destination: Path, max_bytes: int) -> tuple[Path, str]:
     filename = Path(upload.filename or "document.pdf").name
-    if Path(filename).suffix.lower() != ".pdf":
-        raise HTTPException(status_code=400, detail=f"Endast PDF-filer stöds: {filename}")
+    if Path(filename).suffix.lower() not in {".pdf", ".txt"}:
+        raise HTTPException(status_code=400, detail=f"Endast PDF- och TXT-filer stöds: {filename}")
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     total = 0
@@ -62,18 +63,18 @@ def _store_upload(upload: UploadFile, destination: Path, max_bytes: int) -> tupl
 
 
 @app.post("/review")
-def review_pdf(
+def review_documents(
     files: list[UploadFile] = File(...),
     api_key: str = Form(""),
     model: str = Form(settings.openai_model),
     mock: bool = Form(False),
 ):
     if not files:
-        raise HTTPException(status_code=400, detail="Välj minst en PDF-fil.")
+        raise HTTPException(status_code=400, detail="Välj minst en PDF- eller TXT-fil.")
     if len(files) > MAX_BATCH_FILES:
         raise HTTPException(
             status_code=400,
-            detail=f"Högst {MAX_BATCH_FILES} PDF-filer kan behandlas per körning.",
+            detail=f"Högst {MAX_BATCH_FILES} filer kan behandlas per körning.",
         )
 
     selected_model = model.strip() or settings.openai_model
@@ -95,7 +96,7 @@ def review_pdf(
         try:
             if len(documents) == 1:
                 output_path, diagnostics = service.process(
-                    pdf_path=documents[0][0],
+                    source_path=documents[0][0],
                     original_filename=documents[0][1],
                     api_key=api_key.strip() or None,
                     model=selected_model,
@@ -108,7 +109,7 @@ def review_pdf(
                     model=selected_model,
                     mock=mock,
                 )
-        except (PdfExtractionError, ValueError) as exc:
+        except (PdfExtractionError, TextExtractionError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Bearbetningen misslyckades: {exc}") from exc
