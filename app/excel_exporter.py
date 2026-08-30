@@ -17,13 +17,12 @@ IMPORTED_FONT = Font(color="008000")
 REVIEW_FILL = PatternFill("solid", fgColor="FCE4D6")
 
 SUGGESTION_HEADERS = [
-    "Förslags-ID", "Dokument", "Kapitel", "Vers", "Hänvisning", "PDF-sida",
-    "Ursprunglig text", "Föreslagen text", "Feltyp", "Motivering", "Kontext",
-    "Säkerhet", "Status",
+    "Hänvisning", "Kontext", "Ursprunglig text", "Föreslagen text", "Feltyp", "Motivering",
+    "Förslags-ID", "Dokument", "Kapitel", "Vers", "PDF-sida", "Säkerhet", "Status",
 ]
 SUGGESTION_WIDTHS = {
-    1: 12, 2: 24, 3: 9, 4: 8, 5: 28, 6: 10, 7: 35, 8: 35,
-    9: 28, 10: 42, 11: 70, 12: 11, 13: 18,
+    1: 28, 2: 70, 3: 35, 4: 35, 5: 28, 6: 42, 7: 12, 8: 24,
+    9: 9, 10: 8, 11: 10, 12: 11, 13: 18,
 }
 
 
@@ -47,8 +46,8 @@ def _append_suggestion_sheet(ws, suggestions: list[ValidatedSuggestion]) -> None
     ws.append(SUGGESTION_HEADERS)
     for item in suggestions:
         ws.append([
-            item.suggestion_id, item.document, item.chapter, item.verse, item.reference, item.page,
-            item.old, item.new, item.error_type, item.motivation, item.original_context,
+            item.reference, item.original_context, item.old, item.new, item.error_type, item.motivation,
+            item.suggestion_id, item.document, item.chapter, item.verse, item.page,
             item.confidence, item.status,
         ])
     _style_sheet(ws, SUGGESTION_WIDTHS)
