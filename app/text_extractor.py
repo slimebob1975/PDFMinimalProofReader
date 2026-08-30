@@ -51,6 +51,7 @@ def extract_text_units(txt_path: Path) -> tuple[list[TextUnit], dict]:
 
     document = document_name_from_filename(txt_path)
     physical_lines = raw_text.splitlines()
+    document_title_from_content: str | None = None
     units: list[TextUnit] = []
 
     chapter: int | None = None
@@ -130,6 +131,13 @@ def extract_text_units(txt_path: Path) -> tuple[list[TextUnit], dict]:
             continue
 
         if chapter is None:
+            # Newer TXT exports may contain one document-title line before the
+            # first chapter marker. Use it as the document name. Older files
+            # start directly with "Kapitel: N" and keep using the filename.
+            if document_title_from_content is None:
+                document_title_from_content = line
+                document = line
+                continue
             raise TextExtractionError(
                 f"Oväntad text före första 'Kapitel: N' på rad {line_no}: {line}"
             )
@@ -154,5 +162,6 @@ def extract_text_units(txt_path: Path) -> tuple[list[TextUnit], dict]:
         "chapter_count": len({unit.chapter for unit in units if unit.chapter is not None}),
         "unit_count": len(units),
         "document": document,
+        "document_title_source": "content" if document_title_from_content else "filename",
     }
     return units, diagnostics
