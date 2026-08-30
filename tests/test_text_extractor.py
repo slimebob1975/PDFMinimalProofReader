@@ -42,3 +42,34 @@ def test_rejects_verse_before_chapter(tmp_path: Path):
 
     with pytest.raises(TextExtractionError, match="Vers före första kapitelmarkören"):
         extract_text_units(txt)
+
+
+def test_optional_title_line_overrides_filename(tmp_path: Path):
+    txt = tmp_path / "01_Första_Moseboken.txt"
+    txt.write_text(
+        "Första Moseboken\n\n"
+        "Kapitel: 1\n\n"
+        "1. I begynnelsen skapade Gud himmel och jord.\n",
+        encoding="utf-8",
+    )
+
+    units, diagnostics = extract_text_units(txt)
+
+    assert units[0].document == "Första Moseboken"
+    assert units[0].reference == "Första Moseboken 1:1"
+    assert diagnostics["document"] == "Första Moseboken"
+    assert diagnostics["document_title_source"] == "content"
+
+
+def test_rejects_more_than_one_preamble_line(tmp_path: Path):
+    txt = tmp_path / "bad.txt"
+    txt.write_text(
+        "Titel\n"
+        "Extra oväntad rad\n"
+        "Kapitel: 1\n"
+        "1. Text.\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TextExtractionError, match="Oväntad text före första 'Kapitel: N'"):
+        extract_text_units(txt)
